@@ -120,6 +120,52 @@ const isValidDomain = (domain: string) => {
     return domainRegex.test(domain);
 };
 
+// SSRF koruması: Kullanıcıdan gelen host, bağlantı kurulmadan önce çözümlenir ve
+// özel/loopback ağa düşen herhangi bir kayıt varsa reddedilir. Bu aracın barındığı
+// Render datacenter IP'sinden iç ağa erişim denemesi bu sayede engellenir.
+const isPrivateIpv4 = (ip: string): boolean => {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => Number.isNaN(p) || p < 0 || p > 255)) return true;
+    const [a, b] = parts;
+    if (a === 0) return true;                            // 0.0.0.0/8
+    if (a === 10) return true;                           // 10.0.0.0/8
+    if (a === 127) return true;                          // loopback
+    if (a === 100 && b >= 64 && b <= 127) return true;   // CGNAT 100.64.0.0/10
+    if (a === 169 && b === 254) return true;             // link-local 169.254.0.0/16
+    if (a === 172 && b >= 16 && b <= 31) return true;    // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;             // 192.168.0.0/16
+    if (a >= 224) return true;                           // multicast + reserved
+    return false;
+};
+
+const isPrivateIp = (ip: string): boolean => {
+    if (ip.includes(':')) {
+        const low = ip.toLowerCase();
+        if (low === '::' || low === '::1') return true;              // unspecified + loopback
+        if (/^f[cd][0-9a-f]{2}:/.test(low)) return true;             // fc00::/7 unique local
+        if (/^fe[89ab]/.test(low)) return true;                      // fe80::/10 link-local
+        const mapped = low.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+        if (mapped) return isPrivateIpv4(mapped[1]);                 // IPv4-mapped
+        return false;
+    }
+    return isPrivateIpv4(ip);
+};
+
+// A ve AAAA kayıtlarını çözer; özel ağa çözülüyorsa veya hiç çözülmüyorsa null döner.
+const getPublicHostIp = async (domain: string): Promise<string | null> => {
+    try {
+        const [v4, v6] = await Promise.all([
+            dns.promises.resolve4(domain).catch(() => []),
+            dns.promises.resolve6(domain).catch(() => [])
+        ]);
+        const all = [...v4, ...v6];
+        if (all.length === 0 || all.some(isPrivateIp)) return null;
+        return v4[0] || v6[0] || null;
+    } catch {
+        return null;
+    }
+};
+
 // 1. Yeni Birleştirilmiş Subdomain Scan Endpoint
 app.get('/api/scan', async (req, res) => {
     const domain = req.query.domain as string;
@@ -190,8 +236,8 @@ app.get('/api/analyze', async (req, res) => {
 
     let ip = null;
     try {
-        const records = await dns.promises.resolve4(domain);
-        if (records && records.length > 0) ip = records[0];
+        // SSRF koruması: özel ağa çözülen host taramaya sokulmaz
+        ip = await getPublicHostIp(domain);
     } catch (e: any) {
         // DNS resolve failed
     }
@@ -287,6 +333,12 @@ app.get('/api/tech', async (req, res) => {
         return res.status(400).json({ error: 'Geçerli bir subdomain gerekli' });
     }
 
+    // SSRF koruması: özel ağa çözülen host fetch edilmez
+    const hostIp = await getPublicHostIp(subdomain);
+    if (!hostIp) {
+        return res.json([]);
+    }
+
     try {
         const fetch = (await import('node-fetch')).default;
         // 5 saniye timeout ile fetch
@@ -332,6 +384,12 @@ app.get('/api/advanced', async (req, res) => {
     const subdomain = req.query.subdomain as string;
     if (!subdomain || !isValidDomain(subdomain)) {
         return res.status(400).json({ error: 'Geçerli bir subdomain gerekli' });
+    }
+
+    // SSRF koruması: özel ağa çözülen hosta TLS/HTTP bağlantısı kurulmaz
+    const hostIp = await getPublicHostIp(subdomain);
+    if (!hostIp) {
+        return res.json({ ssl: null, advanced: null });
     }
 
     const sslInfo = await new Promise((resolve) => {
