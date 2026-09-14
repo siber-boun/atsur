@@ -21,3 +21,11 @@ export const LIMITS = {
   source: num(process.env.POOL_SOURCE, 4),
   maxInFlight: num(process.env.MAX_INFLIGHT, 40)
 };
+
+export const DNS_RESOLVERS = (process.env.DNS_RESOLVERS || '1.1.1.1,8.8.8.8')
+  .split(',')
+  .map((resolver) => resolver.trim())
+  .filter(Boolean);
+export const DNS_TIMEOUT_MS = num(process.env.DNS_TIMEOUT_MS, 3000);
+export const DNS_CACHE_TTL_MS = num(process.env.DNS_CACHE_TTL_MS, 5 * 60 * 1000);
+export const DNS_CACHE_MAX_ENTRIES = num(process.env.DNS_CACHE_MAX_ENTRIES, 5000);

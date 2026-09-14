@@ -8,6 +8,8 @@ import emailSecurityRoute from './routes/emailsec';
 import healthRoute from './routes/health';
 import scanRoute from './routes/scan';
 import techRoute from './routes/tech';
+import validateRoute from './routes/validate';
+import wildcardRoute from './routes/wildcard';
 
 const app = express();
 let inFlight = 0;
@@ -43,6 +45,8 @@ app.use(techRoute);
 app.use(healthRoute);
 app.use(advancedRoute);
 app.use(emailSecurityRoute);
+app.use(validateRoute);
+app.use(wildcardRoute);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

@@ -17,3 +17,22 @@ export interface TechSignature {
   headers: Record<string, RegExp>;
   html: RegExp | null;
 }
+
+export type DnsStatus = 'live' | 'dead' | 'private' | 'error';
+
+export interface DnsResult {
+  host: string;
+  status: DnsStatus;
+  a: string[];
+  cname: string[];
+  cnameTarget?: string;
+  nxdomainAtEnd?: boolean;
+  wildcardMatch?: boolean;
+}
+
+export interface WildcardInfo {
+  isWildcard: boolean;
+  wildcardIps: string[];
+  wildcardCname?: string;
+  confidence: 'high' | 'low';
+}
