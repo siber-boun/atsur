@@ -51,7 +51,9 @@ interface UserData {
 }
 
 // API Base URL - Local'de /api (Vite proxy üzerinden), Canlıda Render URL'si
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+// Workers dağıtımında VITE_API_URL tanımlı değilse göreli /api isteği statik
+// arayüzün kendisine gider. Canlı Render backend'i güvenli varsayılandır.
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://osint-zgg4.onrender.com';
 
 function App() {
   const [step, setStep] = useState<Step>('login');
