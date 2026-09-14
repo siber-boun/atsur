@@ -29,3 +29,11 @@ export const DNS_RESOLVERS = (process.env.DNS_RESOLVERS || '1.1.1.1,8.8.8.8')
 export const DNS_TIMEOUT_MS = num(process.env.DNS_TIMEOUT_MS, 3000);
 export const DNS_CACHE_TTL_MS = num(process.env.DNS_CACHE_TTL_MS, 5 * 60 * 1000);
 export const DNS_CACHE_MAX_ENTRIES = num(process.env.DNS_CACHE_MAX_ENTRIES, 5000);
+export const SOURCE_TIMEOUT_MS = num(process.env.SOURCE_TIMEOUT_MS, 8000);
+export const SOURCE_KEYS: Record<string, string | undefined> = {
+  OTX_API_KEY: process.env.OTX_API_KEY,
+  SECURITYTRAILS_API_KEY: process.env.SECURITYTRAILS_API_KEY,
+  VIRUSTOTAL_API_KEY: process.env.VIRUSTOTAL_API_KEY,
+  CHAOS_API_KEY: process.env.CHAOS_API_KEY,
+  SHODAN_API_KEY: process.env.SHODAN_API_KEY
+};

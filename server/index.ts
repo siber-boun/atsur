@@ -10,6 +10,7 @@ import scanRoute from './routes/scan';
 import techRoute from './routes/tech';
 import validateRoute from './routes/validate';
 import wildcardRoute from './routes/wildcard';
+import sourcesRoute from './routes/sources';
 
 const app = express();
 let inFlight = 0;
@@ -47,6 +48,7 @@ app.use(advancedRoute);
 app.use(emailSecurityRoute);
 app.use(validateRoute);
 app.use(wildcardRoute);
+app.use(sourcesRoute);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

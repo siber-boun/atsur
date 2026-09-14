@@ -1,23 +1,22 @@
-import { getFetch } from '../lib/http';
-import type { SubdomainSourceResult } from '../types';
+import type { SubdomainSource } from './types';
 
-export async function fetchCrtSh(domain: string): Promise<SubdomainSourceResult[]> {
-  try {
-    const fetch = await getFetch();
-    const response = await fetch(`https://crt.sh/?q=${domain}&output=json`);
-    if (!response.ok) return [];
-    const data: any[] = await response.json();
-    const uniqueSubdomains = new Set<string>();
+const crtsh: SubdomainSource = {
+  id: 'crtsh',
+  label: 'crt.sh',
+  async fetch(domain, context) {
+    const data = await context.fetchJson<Array<{ name_value?: string }>>(
+      `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`,
+      { signal: context.signal }
+    );
+    const hits: { subdomain: string }[] = [];
     data.forEach((item) => {
-      const parts = item.name_value.split('\n');
+      const parts = (item.name_value || '').split('\n');
       parts.forEach((part: string) => {
-        const cleaned = part.trim().toLowerCase();
-        const finalDomain = cleaned.startsWith('*.') ? cleaned.substring(2) : cleaned;
-        if (finalDomain && finalDomain.endsWith(domain)) uniqueSubdomains.add(finalDomain);
+        hits.push({ subdomain: part });
       });
     });
-    return Array.from(uniqueSubdomains).map((subdomain) => ({ subdomain, source: 'crt.sh' }));
-  } catch {
-    return [];
+    return hits;
   }
-}
+};
+
+export default crtsh;

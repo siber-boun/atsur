@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { isValidDomain } from '../lib/validate';
-import { fetchCrtSh } from '../sources/crtsh';
-import { fetchHackerTarget } from '../sources/hackertarget';
+import { ALL_SOURCES, runSources } from '../sources';
 
 const router = Router();
 
@@ -9,21 +8,15 @@ router.get('/api/scan', async (req, res) => {
   const domain = req.query.domain as string;
   if (!domain || !isValidDomain(domain)) return res.status(400).json({ error: 'Geçerli bir domain parametresi gerekli' });
   try {
-    const [crtResult, htResult] = await Promise.allSettled([fetchCrtSh(domain), fetchHackerTarget(domain)]);
-    const crtSubs = crtResult.status === 'fulfilled' ? crtResult.value : [];
-    const htSubs = htResult.status === 'fulfilled' ? htResult.value : [];
-    const merged = new Map<string, { subdomain: string; source: string; ip?: string }>();
-    crtSubs.forEach((s) => merged.set(s.subdomain, { subdomain: s.subdomain, source: 'crt.sh' }));
-    htSubs.forEach((s) => {
-      if (merged.has(s.subdomain)) {
-        const existing = merged.get(s.subdomain)!;
-        existing.source = 'crt.sh + HackerTarget';
-        if (!existing.ip && s.ip) existing.ip = s.ip;
-      } else {
-        merged.set(s.subdomain, { subdomain: s.subdomain, ip: s.ip, source: 'HackerTarget' });
-      }
-    });
-    res.json(Array.from(merged.values()).sort((a, b) => a.subdomain.localeCompare(b.subdomain)));
+    const { hits } = await runSources(domain);
+    const labels = new Map(ALL_SOURCES.map((source) => [source.id, source.label]));
+    const results = Array.from(hits.values()).map((hit) => ({
+      subdomain: hit.subdomain,
+      source: hit.sources.map((id) => labels.get(id) || id).join(' + '),
+      sources: hit.sources,
+      ...(hit.ip ? { ip: hit.ip } : {})
+    })).sort((a, b) => a.subdomain.localeCompare(b.subdomain));
+    res.json(results);
   } catch (error) {
     console.error('Scan error:', error);
     res.status(500).json({ error: 'Tarama sırasında hata oluştu.' });
