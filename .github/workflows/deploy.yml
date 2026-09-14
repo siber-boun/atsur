@@ -31,7 +31,7 @@ jobs:
         run: npm ci
       - name: Create Env file
         working-directory: ./dns-platform
-        run: echo "VITE_API_URL=https://subdomainfinder-da2l.onrender.com" > .env
+        run: echo "VITE_API_URL=https://osint-zgg4.onrender.com" > .env
       - name: Build
         working-directory: ./dns-platform
         run: npm run build
