@@ -224,8 +224,11 @@ function App() {
         throw new Error('API yanıt vermedi');
       }
       
-      const data: SubdomainData[] = await response.json();
-      setSubdomains(prev => ({ ...prev, [domain]: data }));
+      // Faz 5'ten itibaren backend tarama metadatasıyla birlikte bir nesne döner;
+      // eski dizi cevabı da önbellekteki/geri alınmış sürümler için desteklenir.
+      const raw = await response.json();
+      const list: SubdomainData[] = Array.isArray(raw) ? raw : raw.results;
+      setSubdomains(prev => ({ ...prev, [domain]: list }));
       
     } catch (err: any) {
       clearTimeout(wakeUpTimer);
