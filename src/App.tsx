@@ -540,6 +540,28 @@ function App() {
             </form>
           </div>
 
+          <section className="phase-status-card" aria-labelledby="phase-status-title">
+            <div>
+              <p className="phase-status-eyebrow">Geliştirme durumu</p>
+              <h3 id="phase-status-title">Platform güncellemeleri</h3>
+            </div>
+            <ol className="phase-status-list">
+              <li className="phase-status-item is-complete">
+                <span className="phase-status-icon" aria-hidden="true">✓</span>
+                <span><strong>Faz 0 tamamlandı</strong><small>Dizin yapısı ve repo hijyeni</small></span>
+              </li>
+              <li className="phase-status-item is-complete">
+                <span className="phase-status-icon" aria-hidden="true">✓</span>
+                <span><strong>Faz 1 tamamlandı</strong><small>Backend modülerleştirme</small></span>
+              </li>
+              <li className="phase-status-item is-complete">
+                <span className="phase-status-icon" aria-hidden="true">✓</span>
+                <span><strong>Faz 2 tamamlandı</strong><small>Eşzamanlılık havuzu ve SSRF koruması</small></span>
+              </li>
+            </ol>
+            <p className="phase-status-next">Sıradaki: Faz 3 — DNS doğrulama ve wildcard tespiti</p>
+          </section>
+
           {!selectedDomain ? (
             <div className="info-card">
               <div className="info-icon">ℹ️</div>

@@ -477,6 +477,81 @@ body {
   margin-bottom: 2rem;
 }
 
+.phase-status-card {
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+  border: 1px solid #bfdbfe;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.phase-status-eyebrow {
+  color: #2563eb;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+
+.phase-status-card h3 {
+  font-size: 1.1rem;
+}
+
+.phase-status-list {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+  margin: 1.25rem 0;
+}
+
+.phase-status-item {
+  align-items: center;
+  background: white;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.5rem;
+  display: flex;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.75rem;
+}
+
+.phase-status-icon {
+  align-items: center;
+  background: #dcfce7;
+  border-radius: 50%;
+  color: #15803d;
+  display: inline-flex;
+  flex: 0 0 1.5rem;
+  font-size: 0.85rem;
+  font-weight: 800;
+  height: 1.5rem;
+  justify-content: center;
+}
+
+.phase-status-item strong,
+.phase-status-item small {
+  display: block;
+}
+
+.phase-status-item strong {
+  color: #166534;
+  font-size: 0.84rem;
+}
+
+.phase-status-item small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  margin-top: 0.15rem;
+}
+
+.phase-status-next {
+  color: #475569;
+  font-size: 0.85rem;
+}
+
 .domain-form {
   display: flex;
   gap: 1rem;
@@ -1054,6 +1129,10 @@ body {
   
   .domain-form {
     flex-direction: column;
+  }
+
+  .phase-status-list {
+    grid-template-columns: 1fr;
   }
   
   .btn-inline {
