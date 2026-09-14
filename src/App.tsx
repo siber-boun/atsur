@@ -558,8 +558,16 @@ function App() {
                 <span className="phase-status-icon" aria-hidden="true">✓</span>
                 <span><strong>Faz 2 tamamlandı</strong><small>Eşzamanlılık havuzu ve SSRF koruması</small></span>
               </li>
+              <li className="phase-status-item is-complete">
+                <span className="phase-status-icon" aria-hidden="true">✓</span>
+                <span><strong>Faz 3 tamamlandı</strong><small>DNS doğrulama ve wildcard tespiti</small></span>
+              </li>
+              <li className="phase-status-item is-complete">
+                <span className="phase-status-icon" aria-hidden="true">✓</span>
+                <span><strong>Faz 4 tamamlandı</strong><small>Kaynak mimarisi ve yeni keşif kaynakları</small></span>
+              </li>
             </ol>
-            <p className="phase-status-next">Sıradaki: Faz 3 — DNS doğrulama ve wildcard tespiti</p>
+            <p className="phase-status-next">Sıradaki: Faz 5 — Tarama orkestrasyonu ve brute-force</p>
           </section>
 
           {!selectedDomain ? (
