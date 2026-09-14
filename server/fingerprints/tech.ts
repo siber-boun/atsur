@@ -1,0 +1,30 @@
+import type { TechSignature } from '../types';
+
+export const TECH_SIGNATURES: TechSignature[] = [
+  { name: 'WordPress', category: 'CMS', headers: { 'x-powered-by': /wordpress/i }, html: /wp-content|wp-json/i },
+  { name: 'Drupal', category: 'CMS', headers: { 'x-generator': /drupal/i }, html: /Drupal\.settings/i },
+  { name: 'Joomla', category: 'CMS', headers: {}, html: /joomla/i },
+  { name: 'Shopify', category: 'E-Ticaret', headers: { 'x-shopify-stage': /.+/i }, html: /shopify/i },
+  { name: 'Magento', category: 'E-Ticaret', headers: {}, html: /magento|Mage\.Cookies/i },
+  { name: 'React', category: 'Frontend', headers: {}, html: /react\.development|ReactDOM|__reactFiber/i },
+  { name: 'Next.js', category: 'Frontend', headers: { 'x-powered-by': /next\.js/i }, html: /__NEXT_DATA__/i },
+  { name: 'Vue.js', category: 'Frontend', headers: {}, html: /vue\.min\.js|__vue__/i },
+  { name: 'Angular', category: 'Frontend', headers: {}, html: /ng-version|angular\.min\.js/i },
+  { name: 'jQuery', category: 'Frontend', headers: {}, html: /jquery\.min\.js|jquery-\d/i },
+  { name: 'Bootstrap', category: 'Frontend', headers: {}, html: /bootstrap\.min\.css|bootstrap\.min\.js/i },
+  { name: 'PHP', category: 'Backend', headers: { 'x-powered-by': /php/i }, html: null },
+  { name: 'Laravel', category: 'Backend', headers: {}, html: /laravel_session/i },
+  { name: 'Django', category: 'Backend', headers: {}, html: /csrfmiddlewaretoken/i },
+  { name: 'ASP.NET', category: 'Backend', headers: { 'x-powered-by': /asp\.net/i }, html: /__VIEWSTATE/i },
+  { name: 'Ruby Rails', category: 'Backend', headers: { 'x-powered-by': /phusion/i }, html: /authenticity_token/i },
+  { name: 'Nginx', category: 'Sunucu', headers: { server: /nginx/i }, html: null },
+  { name: 'Apache', category: 'Sunucu', headers: { server: /apache/i }, html: null },
+  { name: 'IIS', category: 'Sunucu', headers: { server: /iis/i }, html: null },
+  { name: 'LiteSpeed', category: 'Sunucu', headers: { server: /litespeed/i }, html: null },
+  { name: 'Cloudflare', category: 'CDN', headers: { server: /cloudflare/i }, html: null },
+  { name: 'AWS CloudFront', category: 'CDN', headers: { via: /cloudfront/i }, html: null },
+  { name: 'Fastly', category: 'CDN', headers: { 'x-served-by': /cache/i }, html: null },
+  { name: 'Google Analytics', category: 'Analitik', headers: {}, html: /gtag\(|ga\.js|analytics\.js/i },
+  { name: 'Hotjar', category: 'Analitik', headers: {}, html: /hotjar/i },
+  { name: 'reCAPTCHA', category: 'Güvenlik', headers: {}, html: /recaptcha/i }
+];
