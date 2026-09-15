@@ -72,6 +72,134 @@ interface EmailSecurityInfo {
   grade: string;
 }
 
+const designProcessPhases = [
+  {
+    eyebrow: '01 · Referans',
+    title: 'Figma Make tasarımı incelendi',
+    description: 'Boş ekran ve sonuç ekranı ayrı durumlar olarak açıldı. Yerleşim, katman ilişkileri ve etkileşim dili canlı prototip üzerinden okundu.',
+    detail: 'OSINT Dashboard · Figma Make',
+    metric: '2 ana durum',
+  },
+  {
+    eyebrow: '02 · Sistem',
+    title: 'Görsel tokenlar çıkarıldı',
+    description: 'Koyu operasyon konsolu paleti, teknik tipografi rolleri ve ince HUD çizgileri ortak tasarım sistemine dönüştürüldü.',
+    detail: 'Inter + JetBrains Mono',
+    metric: '6 renk tokenı',
+  },
+  {
+    eyebrow: '03 · Yerleşim',
+    title: 'Ekran görevlerine göre ayrıldı',
+    description: 'Üst çubuk hızlı domain girişine, sol panel yalnızca hedeflere, geniş sağ yüzey ise analiz sonuçlarına ayrıldı.',
+    detail: 'Komut · Hedefler · Analiz',
+    metric: '3 çalışma alanı',
+  },
+  {
+    eyebrow: '04 · Akış',
+    title: 'Mevcut ürün mantığı korundu',
+    description: 'Domain ekleme, localStorage kaydı, hedef seçimi, API taraması ve sonuç detayları yeni arayüze dokunmadan taşındı.',
+    detail: 'Ekle → Solda göster → Seç → Analiz et',
+    metric: 'Aynı veri akışı',
+  },
+  {
+    eyebrow: '05 · Hareket',
+    title: 'Animasyonlar anlamlı durumlara bağlandı',
+    description: 'Radar hedef bekleme durumunu, fade-in yeni sonuçları, pulse ise aktif sistem ve tarama sinyalini anlatıyor.',
+    detail: 'Ping 3 sn · Fade 300 ms · Pulse 2 sn',
+    metric: '3 hareket ilkesi',
+  },
+  {
+    eyebrow: '06 · Doğrulama',
+    title: 'Üretim ve responsive kontroller tamamlandı',
+    description: 'Masaüstü ve mobil renderlar karşılaştırıldı; domainin solda görünmesi, sonuçların sağda açılması ve yatay taşma kontrol edildi.',
+    detail: 'React 19 · TypeScript · CSS',
+    metric: 'Build başarılı',
+  },
+] as const;
+
+function DesignProcessView() {
+  const [activeStep, setActiveStep] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const phase = designProcessPhases[activeStep];
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const timer = window.setInterval(() => {
+      setActiveStep(current => (current + 1) % designProcessPhases.length);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [isPlaying]);
+
+  const restart = () => {
+    setActiveStep(0);
+    setIsPlaying(true);
+  };
+
+  return (
+    <div className="process-view">
+      <header className="process-header">
+        <div className="process-brand">
+          <span className="process-brand-mark">F</span>
+          <span>FIGMA <i>→</i> REACT</span>
+        </div>
+        <div className="process-recording"><i></i> Kayıt sunumu</div>
+        <div className="process-controls">
+          <button type="button" onClick={() => setIsPlaying(value => !value)}>{isPlaying ? 'Durdur' : 'Devam et'}</button>
+          <button type="button" onClick={restart}>Baştan oynat</button>
+        </div>
+      </header>
+
+      <main className="process-main">
+        <aside className="process-timeline" aria-label="Tasarım süreci aşamaları">
+          <div className="process-intro">
+            <span>Tasarım günlüğü</span>
+            <h1>OSINT arayüzü nasıl oluştu?</h1>
+            <p>Figma referansından çalışan ürüne uzanan uygulama süreci.</p>
+          </div>
+          <ol>
+            {designProcessPhases.map((item, index) => (
+              <li key={item.eyebrow} className={index === activeStep ? 'is-current' : index < activeStep ? 'is-done' : ''}>
+                <button type="button" onClick={() => { setActiveStep(index); setIsPlaying(false); }}>
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <b>{item.title}</b>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </aside>
+
+        <section className="process-stage" aria-live="polite">
+          <div className="process-stage-grid" aria-hidden="true"></div>
+          <div className="process-step-copy" key={phase.eyebrow}>
+            <span>{phase.eyebrow}</span>
+            <h2>{phase.title}</h2>
+            <p>{phase.description}</p>
+            <div className="process-facts">
+              <div><small>Teknik not</small><strong>{phase.detail}</strong></div>
+              <div><small>Çıktı</small><strong>{phase.metric}</strong></div>
+            </div>
+          </div>
+
+          <div className={`process-visual process-visual-${activeStep + 1}`} key={`visual-${activeStep}`} aria-hidden="true">
+            <div className="process-signal"><i></i></div>
+            {activeStep === 0 && <><div className="reference-frame"><span>FIGMA MAKE</span><b>OSINT Dashboard</b><small>Empty state + Results state</small></div><div className="reference-scan"></div></>}
+            {activeStep === 1 && <><div className="token-colors">{['#080b10','#0d1117','#161b22','#21262d','#7d8590','#00e5d4'].map(color => <i key={color} style={{ background: color }}></i>)}</div><div className="token-type"><b>Inter</b><span>JetBrains Mono</span></div></>}
+            {activeStep === 2 && <div className="layout-map"><span>COMMAND BAR</span><i>HEDEFLER</i><b>ANALİZ SONUÇLARI</b><small>STATUS</small></div>}
+            {activeStep === 3 && <div className="flow-map"><span>Domain ekle</span><i>→</i><span>Solda göster</span><i>→</i><span>Hedefi seç</span><i>→</i><span>Analiz</span></div>}
+            {activeStep === 4 && <div className="motion-map"><span className="motion-radar"></span><b>300 ms</b><i></i><small>ACTIVE</small></div>}
+            {activeStep === 5 && <div className="validation-map"><span>DESKTOP <b>✓</b></span><span>MOBILE 390 <b>✓</b></span><span>DOMAIN FLOW <b>✓</b></span><span>BUILD <b>✓</b></span></div>}
+          </div>
+
+          <div className="process-progress">
+            <span style={{ width: `${((activeStep + 1) / designProcessPhases.length) * 100}%` }}></span>
+          </div>
+          <div className="process-counter">{String(activeStep + 1).padStart(2, '0')} / {String(designProcessPhases.length).padStart(2, '0')}</div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 // User data structure for localStorage
 interface UserData {
   password: string;
@@ -465,6 +593,10 @@ function App() {
       setShowScope(true);
   };
 
+  if (new URLSearchParams(window.location.search).get('view') === 'design-process') {
+    return <DesignProcessView />;
+  }
+
   if (step === 'login' || step === 'register') {
     return (
       <div className="login-container">
@@ -554,6 +686,50 @@ function App() {
   // Dashboard View
   return (
     <div className="dashboard-layout fade-in">
+      <header className="topbar">
+        <div className="console-brand" aria-label="OSINT Core">
+          <span className="console-mark" aria-hidden="true">
+            <svg viewBox="0 0 28 28" fill="none">
+              <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.5" />
+              <line x1="17" y1="17" x2="24" y2="24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.4" />
+            </svg>
+          </span>
+          <span>OSINT<strong>CORE</strong></span>
+        </div>
+
+        <form onSubmit={handleAddDomain} className="command-search" aria-label="Yeni hedef domain ekle">
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="6.5" cy="6.5" r="4.5" />
+            <line x1="10" y1="10" x2="14" y2="14" strokeLinecap="round" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Domain ekle — örn. sirketadi.com"
+            value={domainInput}
+            onChange={(e) => setDomainInput(e.target.value)}
+            aria-label="Domain"
+          />
+          <button type="submit" disabled={!isDomainValid} title="Domaini listeye ekle">
+            <span>Ekle</span>
+            <kbd>↵</kbd>
+          </button>
+        </form>
+
+        <div className="topbar-actions">
+          <span className="system-kicker"><i></i> Sistem aktif</span>
+          <button
+            type="button"
+            className="user-profile user-profile-button"
+            title={`${loggedInUser || 'Kullanıcı'} · Çıkış yap`}
+            aria-label="Çıkış yap"
+            onClick={handleLogout}
+          >
+            <div className="avatar">{loggedInUser ? loggedInUser.charAt(0).toUpperCase() : 'U'}</div>
+          </button>
+        </div>
+      </header>
+
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-logo">
@@ -563,7 +739,10 @@ function App() {
         </div>
         
         <div className="sidebar-content">
-          <h3 className="section-title">İncelenecek Domainler</h3>
+          <div className="sidebar-heading">
+            <h3 className="section-title">Hedef domainler</h3>
+            <span>{domains.length}</span>
+          </div>
           
           {domains.length === 0 ? (
             <div className="empty-state">
@@ -583,7 +762,7 @@ function App() {
                     onClick={() => handleDomainClick(d)}
                   >
                     <div className="domain-info-group">
-                      <span className="domain-icon">🌐</span>
+                      <span className="domain-icon" aria-hidden="true"></span>
                       <span className="domain-text">{d}</span>
                     </div>
                     <div className="domain-actions-group">
@@ -688,11 +867,21 @@ function App() {
           </section>
 
           {!selectedDomain ? (
-            <div className="info-card">
-              <div className="info-icon">ℹ️</div>
-              <div className="info-text">
-                <h4>Detaylı Analiz İçin Seçim Yapın</h4>
-                <p>Pasif istihbarat kaynaklarını, DNS doğrulamasını ve web güvenliği bulgularını tek akışta görmek için soldan bir hedef seçin. <strong>Girilen veriler hesabınıza özel olarak tarayıcınızda kaydedilir.</strong></p>
+            <div className="awaiting-state">
+              <div className="radar-mark" aria-hidden="true">
+                <span></span><span></span><span></span>
+                <svg viewBox="0 0 80 80" fill="none">
+                  <circle cx="35" cy="35" r="14" stroke="currentColor" strokeWidth="1.5" />
+                  <line x1="46" y1="46" x2="62" y2="62" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                </svg>
+              </div>
+              <p className="awaiting-kicker">Hedef bekleniyor</p>
+              <h2>Keşif yüzeyini başlatın</h2>
+              <p>Üstteki komut alanından bir domain ekleyin. Hedef soldaki listede görünür; seçtiğinizde pasif keşif ve güvenlik analizi başlar.</p>
+              <div className="example-domains" aria-label="Örnek domainler">
+                {['example.com', 'iana.org', 'github.com'].map(example => (
+                  <button key={example} type="button" onClick={() => setDomainInput(example)}>{example}</button>
+                ))}
               </div>
             </div>
           ) : (
@@ -1054,6 +1243,12 @@ function App() {
           )}
         </div>
       </main>
+      <footer className="statusbar" aria-live="polite">
+        <span className={selectedDomain ? 'is-active' : ''}><i></i>{selectedDomain ? 'ACTIVE' : 'IDLE'}</span>
+        <b></b>
+        <span>{domains.length} hedef kayıtlı</span>
+        <span className="statusbar-build">BUSIBER OSINT · CORE v2.4.1</span>
+      </footer>
     </div>
   );
 }
