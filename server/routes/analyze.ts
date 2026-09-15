@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { HTTP_HTTPS_PORTS, HTTPS_PORTS, LIMITS } from '../config';
-import { checkHttp, checkPort } from '../lib/net';
+import { LIMITS, PORT_TARGETS } from '../config';
+import { checkHttp, checkPort, checkSqlBrowser } from '../lib/net';
 import { createPool } from '../lib/pool';
 import { isValidDomain } from '../lib/validate';
 import { resolvePublic } from '../lib/ssrf';
@@ -17,37 +17,40 @@ router.get('/api/analyze', async (req, res) => {
   const activePorts: PortResult[] = [];
   if (ip) {
     const portsPerHostPool = createPool(LIMITS.portsPerHost);
-    const portChecks = HTTP_HTTPS_PORTS.map(async (port) => {
-      const isOpen = await portsPerHostPool.run(() => checkPort(port, ip));
+    const portChecks = PORT_TARGETS.map(async (target) => {
+      const isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
+        ? checkSqlBrowser(ip)
+        : checkPort(target.port, ip));
       if (isOpen) {
-        let status: number | string = 'Açık (Yanıt Yok)';
+        let status: number | string = target.transport === 'udp' ? 'UDP Yanıtı' : 'TCP Açık';
         let isCloudflare = false;
-        const isHttps = HTTPS_PORTS.includes(port);
-        let finalProtocol = isHttps ? 'https:' : 'http:';
-        try {
-          const result = await checkHttp(isHttps ? 'https:' : 'http:', domain, port, ip);
-          status = result.status; isCloudflare = result.isCloudflare; finalProtocol = result.protocolUsed;
-        } catch (e: any) {
-          if (isHttps) {
-            try {
-              const result = await checkHttp('http:', domain, port, ip);
-              status = result.status; isCloudflare = result.isCloudflare; finalProtocol = result.protocolUsed;
-            } catch (e2: any) {}
-          } else {
-            try {
-              const result = await checkHttp('https:', domain, port, ip);
-              status = result.status; isCloudflare = result.isCloudflare; finalProtocol = result.protocolUsed;
-            } catch (e2: any) {}
+        let finalProtocol = target.transport === 'udp' ? 'udp:' : 'tcp:';
+        for (const protocol of target.webProtocols || []) {
+          try {
+            const result = await checkHttp(protocol, domain, target.port, ip);
+            status = result.status;
+            isCloudflare = result.isCloudflare;
+            finalProtocol = result.protocolUsed;
+            break;
+          } catch {
+            // Açık TCP portu HTTP yanıtı vermese bile servis envanterinde tutulur.
           }
         }
-        activePorts.push({ port, status, isCloudflare, protocol: finalProtocol });
+        activePorts.push({
+          port: target.port,
+          status,
+          isCloudflare,
+          protocol: finalProtocol,
+          transport: target.transport,
+          service: target.service,
+          isWeb: finalProtocol === 'http:' || finalProtocol === 'https:'
+        });
       }
     });
     await Promise.all(portChecks);
   }
   activePorts.sort((a, b) => a.port - b.port);
-  const filteredPorts = activePorts.filter((port) => port.status !== 'Açık (Yanıt Yok)');
-  res.json({ ip, ports: filteredPorts, isCloudflare: filteredPorts.some((port) => port.isCloudflare) });
+  res.json({ ip, ports: activePorts, isCloudflare: activePorts.some((port) => port.isCloudflare) });
 });
 
 export default router;

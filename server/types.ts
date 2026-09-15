@@ -9,6 +9,9 @@ export interface PortResult {
   status: number | string;
   isCloudflare: boolean;
   protocol: string;
+  transport: 'tcp' | 'udp';
+  service: string;
+  isWeb: boolean;
 }
 
 export interface TechSignature {

@@ -53,6 +53,9 @@ interface PortInfo {
   port: number;
   status: number | string;
   protocol: string;
+  transport?: 'tcp' | 'udp';
+  service?: string;
+  isWeb?: boolean;
 }
 
 interface TechInfo {
@@ -496,7 +499,7 @@ function App() {
       fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean }>(
         `${API_BASE_URL}/api/analyze?domain=${sub}`,
         {},
-        18000,
+        25000,
         signal
       ),
       fetchJsonWithTimeout<TechInfo[] | { technologies?: TechInfo[] }>(
@@ -551,7 +554,7 @@ function App() {
 
       setServiceRuns(prev => ({
         ...prev,
-        [domain]: { running: true, stage: 'Web servisleri kontrol ediliyor', completed: 0, total: targets.length, failed: 0 }
+        [domain]: { running: true, stage: '45 portta servisler kontrol ediliyor', completed: 0, total: targets.length, failed: 0 }
       }));
 
       let cursor = 0;
@@ -567,7 +570,7 @@ function App() {
             ...prev,
             [domain]: {
               running: !controller.signal.aborted,
-              stage: controller.signal.aborted ? 'Servis taraması iptal edildi' : 'Web servisleri kontrol ediliyor',
+              stage: controller.signal.aborted ? 'Servis taraması iptal edildi' : '45 portta servisler kontrol ediliyor',
               completed,
               total: targets.length,
               failed
@@ -1141,7 +1144,7 @@ function App() {
                             
                             <div className="sub-details">
                               {(detail?.analyzing || detail?.techAnalyzing) ? (
-                                  <span className="analyzing-text">Web servisleri kontrol ediliyor...</span>
+                                  <span className="analyzing-text">45 portta servisler kontrol ediliyor...</span>
                               ) : detail ? (
                                   <div className="detail-rows">
                                     <div className="detail-row">
@@ -1155,29 +1158,40 @@ function App() {
                                               if (p.status === 200 || p.status === 201) statusBadgeClass = 'status-badge-green';
                                               else if (String(p.status).startsWith('3')) statusBadgeClass = 'status-badge-blue';
                                               else if (String(p.status).startsWith('4') || String(p.status).startsWith('5')) statusBadgeClass = 'status-badge-red';
+                                              else if (String(p.status).includes('Açık') || String(p.status).includes('Yanıtı')) statusBadgeClass = 'status-badge-green';
                                               else statusBadgeClass = 'status-badge-gray';
 
+                                              const isWebPort = p.isWeb ?? (p.protocol === 'http:' || p.protocol === 'https:');
                                               const scheme = p.protocol === 'https:' ? 'https' : 'http';
                                               const portStr = (scheme === 'https' && p.port === 443) || (scheme === 'http' && p.port === 80) ? '' : `:${p.port}`;
-                                              const targetUrl = `${scheme}://${sub}${portStr}`;
+                                              const targetUrl = isWebPort ? `${scheme}://${sub}${portStr}` : undefined;
+                                              const title = `${p.service || 'Servis'} · ${(p.transport || 'tcp').toUpperCase()} · ${p.status}`;
 
-                                              return (
-                                                  <a 
+                                              const content = <>
+                                                <span className="port-number">:{p.port}/{p.transport || 'tcp'}</span>
+                                                <span className={`status-badge-detailed ${statusBadgeClass}`}>{p.status}</span>
+                                              </>;
+
+                                              return targetUrl ? (
+                                                  <a
                                                       key={pIdx} 
                                                       href={targetUrl} 
                                                       target="_blank" 
                                                       rel="noopener noreferrer" 
                                                       className="port-badge-group clickable-port"
-                                                      title={`${targetUrl} adresine git`}
+                                                      title={`${title} · ${targetUrl} adresine git`}
                                                   >
-                                                      <span className="port-number">:{p.port}</span>
-                                                      <span className={`status-badge-detailed ${statusBadgeClass}`}>{p.status}</span>
+                                                      {content}
                                                   </a>
+                                              ) : (
+                                                  <span key={pIdx} className="port-badge-group" title={title}>
+                                                    {content}
+                                                  </span>
                                               );
                                           })}
                                       </div>
                                     ) : (
-                                        <span className="no-ports-text">Açık web servisi bulunamadı</span>
+                                        <span className="no-ports-text">Taranan 45 portta açık servis bulunamadı</span>
                                         )}
 
                                         {serviceTechnologies.length > 0 && (                                      <div className="tech-container">
