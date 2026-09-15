@@ -18,14 +18,32 @@ router.get('/api/analyze', async (req, res) => {
   if (ip) {
     const portsPerHostPool = createPool(LIMITS.portsPerHost);
     const portChecks = PORT_TARGETS.map(async (target) => {
-      const isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
+      let status: number | string = target.transport === 'udp' ? 'UDP Yanıtı' : 'TCP Açık';
+      let isCloudflare = false;
+      let finalProtocol = target.transport === 'udp' ? 'udp:' : 'tcp:';
+      // Standart HTTP/S portlarında doğrudan GET denemek, kısa TCP ön kontrolünün
+      // kaçırabildiği veya HEAD'i farklı ele alan uygulamaları doğru sınıflandırır.
+      const isPrimaryWebPort = target.port === 80 || target.port === 443;
+      let webResponded = false;
+      if (isPrimaryWebPort && target.webProtocols) {
+        for (const protocol of target.webProtocols) {
+          try {
+            const result = await checkHttp(protocol, domain, target.port, ip);
+            status = result.status;
+            isCloudflare = result.isCloudflare;
+            finalProtocol = result.protocolUsed;
+            webResponded = true;
+            break;
+          } catch {
+            // TCP kontrolü yine de ham hizmet görünürlüğünü kaydetmeye çalışır.
+          }
+        }
+      }
+      const isOpen = webResponded || await portsPerHostPool.run(() => target.transport === 'udp'
         ? checkSqlBrowser(ip)
         : checkPort(target.port, ip));
       if (isOpen) {
-        let status: number | string = target.transport === 'udp' ? 'UDP Yanıtı' : 'TCP Açık';
-        let isCloudflare = false;
-        let finalProtocol = target.transport === 'udp' ? 'udp:' : 'tcp:';
-        for (const protocol of target.webProtocols || []) {
+        for (const protocol of webResponded ? [] : (target.webProtocols || [])) {
           try {
             const result = await checkHttp(protocol, domain, target.port, ip);
             status = result.status;
@@ -43,7 +61,8 @@ router.get('/api/analyze', async (req, res) => {
           protocol: finalProtocol,
           transport: target.transport,
           service: target.service,
-          isWeb: finalProtocol === 'http:' || finalProtocol === 'https:'
+          isWeb: finalProtocol === 'http:' || finalProtocol === 'https:',
+          isWebCandidate: Boolean(target.webProtocols?.length)
         });
       }
     });

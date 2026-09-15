@@ -12,6 +12,8 @@ export interface PortResult {
   transport: 'tcp' | 'udp';
   service: string;
   isWeb: boolean;
+  /** HTTP doğrulanmasa bile hedef listesinde web/panel hizmeti olarak tanımlanmış açık port. */
+  isWebCandidate: boolean;
 }
 
 export interface TechSignature {
