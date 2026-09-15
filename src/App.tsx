@@ -61,6 +61,12 @@ interface PortInfo {
 interface TechInfo {
   name: string;
   category: string;
+  version?: string;
+  confidence?: number;
+  sources?: Array<'opentechalyzer' | 'builtin' | 'shodan'>;
+  evidence?: string[];
+  observedAt?: string;
+  passive?: boolean;
 }
 
 interface SubdomainDetail {
@@ -493,28 +499,16 @@ function App() {
   };
 
   const handleAnalyzeSubdomain = async (sub: string, signal?: AbortSignal): Promise<boolean> => {
-    setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], analyzing: true, techAnalyzing: true } }));
+    setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], analyzing: true } }));
 
-    const [analysisResult, technologyResult] = await Promise.allSettled([
-      fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean }>(
-        `${API_BASE_URL}/api/analyze?domain=${sub}`,
-        {},
-        25000,
-        signal
-      ),
-      fetchJsonWithTimeout<TechInfo[] | { technologies?: TechInfo[] }>(
-        `${API_BASE_URL}/api/tech?subdomain=${sub}`,
-        {},
-        12000,
-        signal
-      )
-    ]);
+    const analysisResult = await Promise.allSettled([fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean }>(
+      `${API_BASE_URL}/api/analyze?domain=${sub}`,
+      {},
+      25000,
+      signal
+    )]).then(([result]) => result);
 
     const analysis = analysisResult.status === 'fulfilled' ? analysisResult.value : null;
-    const technologyPayload = technologyResult.status === 'fulfilled' ? technologyResult.value : [];
-    const technologies = Array.isArray(technologyPayload)
-      ? technologyPayload
-      : (Array.isArray(technologyPayload.technologies) ? technologyPayload.technologies : []);
 
     setSubdomainDetails(prev => ({
       ...prev,
@@ -525,13 +519,12 @@ function App() {
           ports: Array.isArray(analysis.ports) ? analysis.ports : [],
           isCloudflare: Boolean(analysis.isCloudflare)
         } : {}),
-        technologies,
         analyzing: false,
         techAnalyzing: false
       }
     }));
 
-    return analysisResult.status === 'fulfilled' && technologyResult.status === 'fulfilled';
+    return analysisResult.status === 'fulfilled';
   };
 
   const handleAnalyzeAll = async () => {
@@ -661,6 +654,7 @@ function App() {
                     ssl: data.ssl,
                     security: data.advanced?.security,
                     waf: data.advanced?.waf,
+                    technologies: Array.isArray(data.technologies) ? data.technologies : [],
                     advancedAnalyzing: false
                   }
                 }));
@@ -1300,7 +1294,7 @@ function App() {
                         {subdomains[selectedDomain] && subdomains[selectedDomain].some(item => {
                             const sub = typeof item === 'string' ? (item as string) : item.subdomain;
                             const detail = subdomainDetails[sub];
-                            return detail && (detail.ssl || detail.security || detail.waf || detail.advancedAnalyzing);
+                            return detail && (detail.ssl || detail.security || detail.waf || detail.technologies || detail.advancedAnalyzing);
                         }) && (
                             <div className="advanced-summary-box fade-in">
                                 <div className="advanced-table-heading">
@@ -1317,6 +1311,7 @@ function App() {
                                                 <th>HTTP Header Güvenliği</th>
                                                 <th>Eksik Headerlar</th>
                                                 <th>WAF Koruması</th>
+                                                <th>Teknoloji Yığını</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -1324,7 +1319,7 @@ function App() {
                                                 const sub = typeof item === 'string' ? (item as string) : item.subdomain;
                                                 const detail = subdomainDetails[sub];
                                                 
-                                                if (!detail || (!detail.ssl && !detail.security && !detail.waf && !detail.advancedAnalyzing)) return null;
+                                                if (!detail || (!detail.ssl && !detail.security && !detail.waf && !detail.technologies && !detail.advancedAnalyzing)) return null;
 
                                                 return (
                                                     <tr key={idx}>
@@ -1362,6 +1357,18 @@ function App() {
                                                         <td>
                                                             {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
                                                              (detail.waf && detail.waf.detected) ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> : <span className="badge-none">Korumasız</span>}
+                                                        </td>
+                                                        <td className="col-tech-stack">
+                                                            {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> :
+                                                              (detail.technologies || []).filter(tech => tech.category !== 'CDN').length > 0 ? (
+                                                                <div className="tech-stack-list">
+                                                                  {(detail.technologies || []).filter(tech => tech.category !== 'CDN').slice(0, 6).map((tech, techIdx) => {
+                                                                    const label = `${tech.name}${tech.version ? ` ${tech.version}` : ''}`;
+                                                                    const source = tech.passive ? 'Pasif Shodan gözlemi' : `${tech.confidence ?? '—'}% güven · ${(tech.sources || []).join(', ')}`;
+                                                                    return <span key={techIdx} className={`tech-badge ${tech.passive ? 'tech-passive' : 'tech-gray'}`} title={`${tech.category} · ${source}`}>{label}</span>;
+                                                                  })}
+                                                                </div>
+                                                              ) : <span className="text-muted">Tespit yok</span>}
                                                         </td>
                                                     </tr>
                                                 );

@@ -5,6 +5,7 @@ import { detectWaf } from '../fingerprints/waf';
 import { httpPool } from '../lib/pool';
 import { resolvePublic } from '../lib/ssrf';
 import { isValidDomain } from '../lib/validate';
+import { detectTechnologies } from '../lib/technology';
 
 const router = Router();
 
@@ -50,7 +51,9 @@ router.get('/api/advanced', async (req, res) => {
     requestObj.on('timeout', () => { requestObj.destroy(); resolve(null); });
     requestObj.end();
   }));
-  res.json({ ssl: sslInfo, advanced: headerWafInfo });
+  const sharedEdge = Boolean((headerWafInfo as any)?.waf?.detected && /cloudflare|fastly|akamai/i.test((headerWafInfo as any).waf.name || ''));
+  const technologies = await detectTechnologies(subdomain, { sharedEdge });
+  res.json({ ssl: sslInfo, advanced: headerWafInfo, technologies });
 });
 
 export default router;

@@ -70,6 +70,7 @@ export const LIMITS = {
   portsPerHost: num(process.env.POOL_PORTS, 8),
   dns: num(process.env.POOL_DNS, 40),
   http: num(process.env.POOL_HTTP, 25),
+  tech: num(process.env.POOL_TECH, 3),
   source: num(process.env.POOL_SOURCE, 4),
   maxInFlight: num(process.env.MAX_INFLIGHT, 40)
 };

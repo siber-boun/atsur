@@ -1890,6 +1890,10 @@ body {
 .summary-table th { color: #7d8590; background: #0a0e13; }
 .summary-table th, .summary-table td { border-color: #21262d; }
 .summary-table tr:hover { background: #11161d; }
+.col-tech-stack { min-width: 230px; }
+.tech-stack-list { display: flex; flex-wrap: wrap; gap: 4px; min-width: 210px; }
+.tech-stack-list .tech-badge { white-space: nowrap; }
+.tech-passive { color: #e3a008; background: rgba(227, 160, 8, 0.08); border-color: rgba(227, 160, 8, 0.22); }
 .scope-textarea { color: #e6edf3; background: #080b10; }
 .loading-state { min-height: 360px; font-family: var(--mono); }
 .spinner { width: 52px; height: 52px; border: 1px solid rgba(0, 229, 212, 0.2); border-top-color: #00e5d4; box-shadow: 0 0 24px rgba(0, 229, 212, 0.08); }

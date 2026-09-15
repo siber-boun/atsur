@@ -49,4 +49,5 @@ export async function mapPool<T, R>(
 export const socketPool = createPool(LIMITS.socket);
 export const dnsPool = createPool(LIMITS.dns);
 export const httpPool = createPool(LIMITS.http);
+export const techPool = createPool(LIMITS.tech);
 export const sourcePool = createPool(LIMITS.source);
