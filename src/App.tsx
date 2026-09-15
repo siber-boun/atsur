@@ -59,10 +59,6 @@ interface PortInfo {
   isWebCandidate?: boolean;
 }
 
-// Eski localStorage sonuçlarında `isWebCandidate` alanı bulunmaz. Bu liste, yeni API cevabı
-// alınana kadar açık web/panel portlarının kapsamda kaybolmasını önler.
-const WEB_CANDIDATE_PORTS = new Set([80, 443, 2082, 2083, 2086, 2087, 3000, 3001, 4000, 5000, 7000, 7001, 7047, 7048, 7080, 7085, 7443, 8000, 8008, 8080, 8081, 8082, 8083, 8084, 8090, 8181, 8443, 8444, 8888, 8931, 9000, 9090, 9200, 9443, 10443]);
-
 interface TechInfo {
   name: string;
   category: string;
@@ -696,11 +692,12 @@ function App() {
           const isExcluded = excludedPrefixes.some(prefix => sub.toLowerCase().startsWith(prefix));
           if (isExcluded) return;
 
-          // 2. HTTP/HTTPS doğrulanmış veya açık web/panel portu olanları ekle. Bazı
-          // uygulamalar HEAD yanıtı vermez; örneğin açık 8443/Tomcat yine kapsam adayıdır.
+          // 2. Kapsama yalnız erişilebilir HTTP/S uygulamaları alınır. Tek başına HTTP
+          // 301 yönlendirmesi yeterli değildir; HTTPS hedefi erişilemiyorsa scope'a eklenmez.
           if (detail && detail.ports && detail.ports.length > 0) {
               const hasActiveWeb = detail.ports.some(p =>
-                p.isWeb === true || p.isWebCandidate === true || p.protocol === 'http:' || p.protocol === 'https:' || WEB_CANDIDATE_PORTS.has(p.port)
+                (p.isWeb === true || p.protocol === 'http:' || p.protocol === 'https:') &&
+                (p.protocol === 'https:' || !String(p.status).startsWith('3'))
               );
               if (hasActiveWeb) {
                   validSubdomains.push(sub);
