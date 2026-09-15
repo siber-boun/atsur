@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import './index.css';
 
-type Step = 'login' | 'register' | 'dashboard';
+type Step = 'login' | 'dashboard';
 
 interface SubdomainData {
   subdomain: string;
@@ -202,12 +202,14 @@ function DesignProcessView() {
 
 // User data structure for localStorage
 interface UserData {
-  password: string;
   domains: string[];
   subdomainsCache: Record<string, SubdomainData[]>;
   subdomainDetailsCache: Record<string, SubdomainDetail>;
   emailSecCache: Record<string, EmailSecurityInfo>;
 }
+
+const SINGLE_USER_EMAIL = 'banusencer@yahoo.com';
+const SINGLE_USER_PASSWORD = 'Nmtd1881';
 
 // API Base URL - Local'de /api (Vite proxy üzerinden), Canlıda Render URL'si
 // Workers dağıtımında VITE_API_URL tanımlı değilse göreli /api isteği statik
@@ -220,7 +222,6 @@ function App() {
   // Auth states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   
@@ -239,8 +240,7 @@ function App() {
   const [scopeOutput, setScopeOutput] = useState<string>('');
   const [showScope, setShowScope] = useState<boolean>(false);
   
-  const isLoginValid = email.includes('@') && password.length >= 6;
-  const isRegisterValid = isLoginValid && password === confirmPassword;
+  const isLoginValid = email.trim().length > 0 && password.length > 0;
   
   // Sıkı domain doğrulaması (Sadece harf, rakam, tire ve nokta)
   const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
@@ -284,50 +284,35 @@ function App() {
     }
   }, [domains, subdomains, subdomainDetails, emailSecurity, loggedInUser]);
 
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-    
-    if (isRegisterValid) {
-      const usersRaw = localStorage.getItem('osint_users');
-      const users: Record<string, UserData> = usersRaw ? JSON.parse(usersRaw) : {};
-      
-      if (users[email]) {
-        setAuthError('Bu e-posta adresi ile zaten bir hesap var.');
-        return;
-      }
-      
-      users[email] = { password, domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
-      localStorage.setItem('osint_users', JSON.stringify(users));
-      
-      setLoggedInUser(email);
-      setStep('dashboard');
-    }
-  };
-
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-    
-    if (isLoginValid) {
-      const usersRaw = localStorage.getItem('osint_users');
-      const users: Record<string, UserData> = usersRaw ? JSON.parse(usersRaw) : {};
-      
-      if (!users[email] || users[email].password !== password) {
-        setAuthError('Hatalı e-posta veya şifre.');
-        return;
-      }
-      
-      setLoggedInUser(email);
-      setStep('dashboard');
+
+    if (email.trim().toLowerCase() !== SINGLE_USER_EMAIL || password !== SINGLE_USER_PASSWORD) {
+      setAuthError('Hatalı e-posta veya şifre.');
+      return;
     }
+
+    const usersRaw = localStorage.getItem('osint_users');
+    const users: Record<string, UserData> = usersRaw ? JSON.parse(usersRaw) : {};
+    if (!users[SINGLE_USER_EMAIL]) {
+      users[SINGLE_USER_EMAIL] = {
+        domains: [],
+        subdomainsCache: {},
+        subdomainDetailsCache: {},
+        emailSecCache: {}
+      };
+      localStorage.setItem('osint_users', JSON.stringify(users));
+    }
+
+    setLoggedInUser(SINGLE_USER_EMAIL);
+    setStep('dashboard');
   };
 
   const handleLogout = () => {
     setLoggedInUser(null);
     setEmail('');
     setPassword('');
-    setConfirmPassword('');
     setStep('login');
   };
 
@@ -597,7 +582,7 @@ function App() {
     return <DesignProcessView />;
   }
 
-  if (step === 'login' || step === 'register') {
+  if (step === 'login') {
     return (
       <div className="login-container">
         <div className="card login-card fade-in">
@@ -608,7 +593,7 @@ function App() {
           </div>
           <div className="header">
             <h1>BUSIBER OSINT</h1>
-            <p>{step === 'login' ? 'Sisteme erişmek için giriş yapın' : 'Yeni bir hesap oluşturun'}</p>
+            <p>Yetkili kullanıcı hesabıyla sisteme giriş yapın</p>
           </div>
           
           {authError && (
@@ -617,7 +602,7 @@ function App() {
             </div>
           )}
           
-          <form onSubmit={step === 'login' ? handleLogin : handleRegister}>
+          <form onSubmit={handleLogin}>
             <div className="form-group">
               <label htmlFor="email">E-posta Adresi</label>
               <input 
@@ -644,33 +629,10 @@ function App() {
               />
             </div>
 
-            {step === 'register' && (
-              <div className="form-group fade-in">
-                <label htmlFor="confirmPassword">Şifre Tekrar</label>
-                <input 
-                  type="password" 
-                  id="confirmPassword" 
-                  className="form-input" 
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                />
-              </div>
-            )}
-            
-            <button type="submit" className="btn" disabled={step === 'login' ? !isLoginValid : !isRegisterValid}>
-              {step === 'login' ? 'Giriş Yap' : 'Kayıt Ol'}
+            <button type="submit" className="btn" disabled={!isLoginValid}>
+              Giriş Yap
             </button>
           </form>
-
-          <div className="auth-switch">
-            {step === 'login' ? (
-              <p>Hesabınız yok mu? <button className="text-link" onClick={() => { setStep('register'); setAuthError(''); }}>Kayıt Olun</button></p>
-            ) : (
-              <p>Zaten hesabınız var mı? <button className="text-link" onClick={() => { setStep('login'); setAuthError(''); }}>Giriş Yapın</button></p>
-            )}
-          </div>
         </div>
       </div>
     );
