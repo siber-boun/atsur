@@ -2022,6 +2022,16 @@ body {
   cursor: not-allowed;
   opacity: 0.72;
 }
+.analysis-action.is-cancel {
+  color: #ff8c8c;
+  background: rgba(255, 91, 91, 0.08);
+  border-color: rgba(255, 91, 91, 0.42);
+}
+.analysis-action.is-cancel:hover {
+  color: #ffb0b0;
+  background: rgba(255, 91, 91, 0.13);
+  border-color: #ff5b5b;
+}
 .refresh-action {
   display: grid !important;
   place-items: center;

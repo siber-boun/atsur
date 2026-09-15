@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './index.css';
 
 type Step = 'login' | 'dashboard';
@@ -37,6 +37,15 @@ interface AdvancedRun {
   stage: string;
   completed: number;
   total: number;
+  error?: string;
+}
+
+interface ServiceRun {
+  running: boolean;
+  stage: string;
+  completed: number;
+  total: number;
+  failed: number;
   error?: string;
 }
 
@@ -210,6 +219,51 @@ interface UserData {
 
 const SINGLE_USER_EMAIL = 'banusencer@yahoo.com';
 const SINGLE_USER_PASSWORD = 'Nmtd1881';
+const SESSION_KEY = 'osint_session';
+
+function readStoredUsers(): Record<string, UserData> {
+  try {
+    const raw = localStorage.getItem('osint_users');
+    return raw ? JSON.parse(raw) as Record<string, UserData> : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeCachedDetail(detail: SubdomainDetail): SubdomainDetail {
+  const normalized: SubdomainDetail = {
+    ...detail,
+    analyzing: false,
+    techAnalyzing: false,
+    advancedAnalyzing: false
+  };
+  if (detail.technologies !== undefined) {
+    normalized.technologies = Array.isArray(detail.technologies) ? detail.technologies : [];
+  }
+  return normalized;
+}
+
+async function fetchJsonWithTimeout<T>(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 15000,
+  parentSignal?: AbortSignal
+): Promise<T> {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  if (parentSignal?.aborted) controller.abort();
+  else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok) throw new Error(`API isteği başarısız (${response.status})`);
+    return await response.json() as T;
+  } finally {
+    window.clearTimeout(timeoutId);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  }
+}
 
 // API Base URL - Local'de /api (Vite proxy üzerinden), Canlıda Render URL'si
 // Workers dağıtımında VITE_API_URL tanımlı değilse göreli /api isteği statik
@@ -217,13 +271,15 @@ const SINGLE_USER_PASSWORD = 'Nmtd1881';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://osint-zgg4.onrender.com';
 
 function App() {
-  const [step, setStep] = useState<Step>('login');
+  const hasStoredSession = sessionStorage.getItem(SESSION_KEY) === SINGLE_USER_EMAIL;
+  const [step, setStep] = useState<Step>(hasStoredSession ? 'dashboard' : 'login');
   
   // Auth states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(hasStoredSession ? SINGLE_USER_EMAIL : null);
+  const [userDataReady, setUserDataReady] = useState(false);
   
   // Dashboard states
   const [domainInput, setDomainInput] = useState('');
@@ -237,8 +293,10 @@ function App() {
   const [error, setError] = useState<Record<string, string>>({});
   const [scanMeta, setScanMeta] = useState<Record<string, ScanMeta>>({});
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
+  const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
   const [scopeOutput, setScopeOutput] = useState<string>('');
   const [showScope, setShowScope] = useState<boolean>(false);
+  const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
   
   const isLoginValid = email.trim().length > 0 && password.length > 0;
   
@@ -248,17 +306,27 @@ function App() {
 
   // Load user data on login
   useEffect(() => {
+    setUserDataReady(false);
     if (loggedInUser) {
-      const usersRaw = localStorage.getItem('osint_users');
-      if (usersRaw) {
-        const users: Record<string, UserData> = JSON.parse(usersRaw);
-        if (users[loggedInUser]) {
-          setDomains(users[loggedInUser].domains || []);
-          setSubdomains(users[loggedInUser].subdomainsCache || {});
-          setSubdomainDetails(users[loggedInUser].subdomainDetailsCache || {});
-          setEmailSecurity(users[loggedInUser].emailSecCache || {});
-        }
+      const users = readStoredUsers();
+      const userData = users[loggedInUser] || {
+        domains: [],
+        subdomainsCache: {},
+        subdomainDetailsCache: {},
+        emailSecCache: {}
+      };
+      if (!users[loggedInUser]) {
+        users[loggedInUser] = userData;
+        localStorage.setItem('osint_users', JSON.stringify(users));
       }
+      setDomains(userData.domains || []);
+      setSubdomains(userData.subdomainsCache || {});
+      const cachedDetails = userData.subdomainDetailsCache || {};
+      setSubdomainDetails(Object.fromEntries(
+        Object.entries(cachedDetails).map(([subdomain, detail]) => [subdomain, normalizeCachedDetail(detail)])
+      ));
+      setEmailSecurity(userData.emailSecCache || {});
+      setUserDataReady(true);
     } else {
       setDomains([]);
       setSelectedDomain(null);
@@ -270,19 +338,20 @@ function App() {
 
   // Save domain list and caches when they change
   useEffect(() => {
-    if (loggedInUser) {
-      const usersRaw = localStorage.getItem('osint_users');
-      const users: Record<string, UserData> = usersRaw ? JSON.parse(usersRaw) : {};
+    if (loggedInUser && userDataReady) {
+      const users = readStoredUsers();
       
       if (users[loggedInUser]) {
         users[loggedInUser].domains = domains;
         users[loggedInUser].subdomainsCache = subdomains;
-        users[loggedInUser].subdomainDetailsCache = subdomainDetails;
+        users[loggedInUser].subdomainDetailsCache = Object.fromEntries(
+          Object.entries(subdomainDetails).map(([subdomain, detail]) => [subdomain, normalizeCachedDetail(detail)])
+        );
         users[loggedInUser].emailSecCache = emailSecurity;
         localStorage.setItem('osint_users', JSON.stringify(users));
       }
     }
-  }, [domains, subdomains, subdomainDetails, emailSecurity, loggedInUser]);
+  }, [domains, subdomains, subdomainDetails, emailSecurity, loggedInUser, userDataReady]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -293,8 +362,7 @@ function App() {
       return;
     }
 
-    const usersRaw = localStorage.getItem('osint_users');
-    const users: Record<string, UserData> = usersRaw ? JSON.parse(usersRaw) : {};
+    const users = readStoredUsers();
     if (!users[SINGLE_USER_EMAIL]) {
       users[SINGLE_USER_EMAIL] = {
         domains: [],
@@ -305,11 +373,15 @@ function App() {
       localStorage.setItem('osint_users', JSON.stringify(users));
     }
 
+    sessionStorage.setItem(SESSION_KEY, SINGLE_USER_EMAIL);
     setLoggedInUser(SINGLE_USER_EMAIL);
     setStep('dashboard');
   };
 
   const handleLogout = () => {
+    serviceAbortRef.current?.controller.abort();
+    serviceAbortRef.current = null;
+    sessionStorage.removeItem(SESSION_KEY);
     setLoggedInUser(null);
     setEmail('');
     setPassword('');
@@ -339,9 +411,8 @@ function App() {
     }
     
     if (loggedInUser) {
-        const usersRaw = localStorage.getItem('osint_users');
-        if (usersRaw) {
-            const users = JSON.parse(usersRaw);
+        const users = readStoredUsers();
+        if (users[loggedInUser]) {
             users[loggedInUser].domains = newDomains;
             users[loggedInUser].subdomainsCache = newSubdomains;
             localStorage.setItem('osint_users', JSON.stringify(users));
@@ -385,16 +456,12 @@ function App() {
     }, 3000);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/scan?domain=${domain}`);
+      const raw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}`, {}, 60000);
       clearTimeout(wakeUpTimer);
-      if (!response.ok) {
-        throw new Error('API yanıt vermedi');
-      }
-      
+
       // Faz 5'ten itibaren backend tarama metadatasıyla birlikte bir nesne döner;
       // eski dizi cevabı da önbellekteki/geri alınmış sürümler için desteklenir.
-      const raw = await response.json();
-      const list: SubdomainData[] = Array.isArray(raw) ? raw : raw.results;
+      const list: SubdomainData[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.results) ? raw.results : []);
       setSubdomains(prev => ({ ...prev, [domain]: list }));
       if (!Array.isArray(raw)) {
         setScanMeta(prev => ({
@@ -422,54 +489,117 @@ function App() {
     fetchSubdomains(domain);
   };
 
-  const handleAnalyzeSubdomain = async (sub: string) => {
+  const handleAnalyzeSubdomain = async (sub: string, signal?: AbortSignal): Promise<boolean> => {
     setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], analyzing: true, techAnalyzing: true } }));
-    
-    // Port and Web Service Analysis
-    fetch(`${API_BASE_URL}/api/analyze?domain=${sub}`)
-      .then(res => res.json())
-      .then(data => {
-        setSubdomainDetails(prev => ({ 
-            ...prev, 
-            [sub]: { ...prev[sub], ip: data.ip, ports: data.ports, isCloudflare: data.isCloudflare, analyzing: false } 
-        }));
-      })
-      .catch(() => {
-        setSubdomainDetails(prev => ({ 
-            ...prev, 
-            [sub]: { ...prev[sub], ip: null, ports: [], isCloudflare: false, analyzing: false } 
-        }));
-      });
 
-    // Technology Fingerprinting Analysis
-    fetch(`${API_BASE_URL}/api/tech?subdomain=${sub}`)
-      .then(res => res.json())
-      .then(data => {
-         setSubdomainDetails(prev => ({ 
-            ...prev, 
-            [sub]: { ...prev[sub], technologies: data, techAnalyzing: false } 
-         }));
-      })
-      .catch(() => {
-         setSubdomainDetails(prev => ({ 
-            ...prev, 
-            [sub]: { ...prev[sub], technologies: [], techAnalyzing: false } 
-         }));
-      });
+    const [analysisResult, technologyResult] = await Promise.allSettled([
+      fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean }>(
+        `${API_BASE_URL}/api/analyze?domain=${sub}`,
+        {},
+        18000,
+        signal
+      ),
+      fetchJsonWithTimeout<TechInfo[] | { technologies?: TechInfo[] }>(
+        `${API_BASE_URL}/api/tech?subdomain=${sub}`,
+        {},
+        12000,
+        signal
+      )
+    ]);
+
+    const analysis = analysisResult.status === 'fulfilled' ? analysisResult.value : null;
+    const technologyPayload = technologyResult.status === 'fulfilled' ? technologyResult.value : [];
+    const technologies = Array.isArray(technologyPayload)
+      ? technologyPayload
+      : (Array.isArray(technologyPayload.technologies) ? technologyPayload.technologies : []);
+
+    setSubdomainDetails(prev => ({
+      ...prev,
+      [sub]: {
+        ...prev[sub],
+        ...(analysis ? {
+          ip: analysis.ip ?? null,
+          ports: Array.isArray(analysis.ports) ? analysis.ports : [],
+          isCloudflare: Boolean(analysis.isCloudflare)
+        } : {}),
+        technologies,
+        analyzing: false,
+        techAnalyzing: false
+      }
+    }));
+
+    return analysisResult.status === 'fulfilled' && technologyResult.status === 'fulfilled';
   };
 
   const handleAnalyzeAll = async () => {
       if (!selectedDomain || !subdomains[selectedDomain]) return;
-      const subs = subdomains[selectedDomain];
-      
-      for (const item of subs) {
-          const isLegacyString = typeof item === 'string';
-          const sub = isLegacyString ? (item as string) : item.subdomain;
-          if (!subdomainDetails[sub] || (subdomainDetails[sub].ip === null && (!subdomainDetails[sub].ports || subdomainDetails[sub].ports!.length === 0))) {
-              await handleAnalyzeSubdomain(sub);
-              // Rate limit on frontend side as well to avoid overwhelming our own backend
-              await new Promise(resolve => setTimeout(resolve, 300));
+      const domain = selectedDomain;
+      if (serviceRuns[domain]?.running) {
+        serviceAbortRef.current?.controller.abort();
+        return;
+      }
+
+      serviceAbortRef.current?.controller.abort();
+      const controller = new AbortController();
+      serviceAbortRef.current = { domain, controller };
+      const targets = [...new Set(subdomains[domain]
+        .filter(item => typeof item === 'string' || (
+          item.status !== 'dead' && item.status !== 'private' && !item.wildcardMatch
+        ))
+        .map(item => typeof item === 'string' ? item : item.subdomain)
+        .filter(subdomain => !subdomain.split('.').some(label => label.startsWith('_'))))];
+
+      setServiceRuns(prev => ({
+        ...prev,
+        [domain]: { running: true, stage: 'Web servisleri kontrol ediliyor', completed: 0, total: targets.length, failed: 0 }
+      }));
+
+      let cursor = 0;
+      let completed = 0;
+      let failed = 0;
+      const worker = async () => {
+        while (cursor < targets.length && !controller.signal.aborted) {
+          const sub = targets[cursor++];
+          const ok = await handleAnalyzeSubdomain(sub, controller.signal);
+          completed += 1;
+          if (!ok) failed += 1;
+          setServiceRuns(prev => ({
+            ...prev,
+            [domain]: {
+              running: !controller.signal.aborted,
+              stage: controller.signal.aborted ? 'Servis taraması iptal edildi' : 'Web servisleri kontrol ediliyor',
+              completed,
+              total: targets.length,
+              failed
+            }
+          }));
+        }
+      };
+
+      try {
+        await Promise.all(Array.from({ length: Math.min(3, targets.length) }, () => worker()));
+        const cancelled = controller.signal.aborted;
+        setServiceRuns(prev => ({
+          ...prev,
+          [domain]: {
+            running: false,
+            stage: cancelled ? 'Servis taraması iptal edildi' : 'Servis taraması tamamlandı',
+            completed,
+            total: targets.length,
+            failed,
+            ...(cancelled ? { error: 'Tarama kullanıcı tarafından iptal edildi.' } :
+              failed ? { error: `${failed} hedef zaman aşımı veya API hatası nedeniyle tamamlanamadı.` } : {})
           }
+        }));
+      } finally {
+        setSubdomainDetails(prev => Object.fromEntries(
+          Object.entries(prev).map(([subdomain, detail]) => [subdomain, {
+            ...detail,
+            analyzing: false,
+            techAnalyzing: false
+          }])
+        ));
+        if (serviceAbortRef.current?.controller === controller) serviceAbortRef.current = null;
       }
   };
 
@@ -480,9 +610,7 @@ function App() {
       setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Pasif kaynaklar ve DNS doğrulanıyor', completed: 0, total: 0 } }));
 
       try {
-          const scanResponse = await fetch(`${API_BASE_URL}/api/scan?domain=${domain}&validate=1`);
-          if (!scanResponse.ok) throw new Error('Çok kaynaklı tarama başlatılamadı');
-          const scanRaw = await scanResponse.json();
+          const scanRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}&validate=1`, {}, 60000);
           let discovered: SubdomainData[] = Array.isArray(scanRaw) ? scanRaw : (scanRaw.results || []);
           const meta: ScanMeta = {
             sources: Array.isArray(scanRaw) ? [] : (scanRaw.sources || []),
@@ -492,24 +620,24 @@ function App() {
 
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Wordlist ve permütasyon DNS taraması', completed: 0, total: 0 } }));
           const seeds = discovered.filter(item => item.status === 'live').slice(0, 30).map(item => item.subdomain);
-          const bruteResponse = await fetch(`${API_BASE_URL}/api/brute`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domain, mode: 'both', seeds })
-          });
-          if (bruteResponse.ok) {
-            const bruteRaw = await bruteResponse.json();
+          try {
+            const bruteRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/brute`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ domain, mode: 'both', seeds })
+            }, 60000);
             discovered = mergeSubdomainResults(discovered, bruteRaw.results || []);
             meta.bruteSkipped = bruteRaw.skipped;
             meta.bruteCount = (bruteRaw.results || []).length;
+          } catch {
+            meta.bruteSkipped = 'timeout';
           }
 
           setSubdomains(prev => ({ ...prev, [domain]: discovered }));
           setScanMeta(prev => ({ ...prev, [domain]: meta }));
 
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'E-posta ve web güvenliği inceleniyor', completed: 0, total: discovered.length } }));
-          const emailPromise = fetch(`${API_BASE_URL}/api/email-sec?domain=${domain}`)
-            .then(res => res.ok ? res.json() : null)
+          const emailPromise = fetchJsonWithTimeout<EmailSecurityInfo>(`${API_BASE_URL}/api/email-sec?domain=${domain}`, {}, 12000)
             .then(data => data && setEmailSecurity(prev => ({ ...prev, [domain]: data })))
             .catch(() => undefined);
 
@@ -522,13 +650,14 @@ function App() {
               const sub = item.subdomain;
               setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], advancedAnalyzing: true } }));
               try {
-                const response = await fetch(`${API_BASE_URL}/api/advanced?subdomain=${sub}`);
-                const data = response.ok ? await response.json() : null;
+                const data = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/advanced?subdomain=${sub}`, {}, 15000);
                 setSubdomainDetails(prev => ({
                   ...prev,
                   [sub]: {
                     ...prev[sub],
-                    ...(data ? { ssl: data.ssl, security: data.advanced?.security, waf: data.advanced?.waf } : {}),
+                    ssl: data.ssl,
+                    security: data.advanced?.security,
+                    waf: data.advanced?.waf,
                     advancedAnalyzing: false
                   }
                 }));
@@ -641,6 +770,7 @@ function App() {
   const selectedResults = selectedDomain ? (subdomains[selectedDomain] || []) : [];
   const activeMeta = selectedDomain ? scanMeta[selectedDomain] : undefined;
   const activeRun = selectedDomain ? advancedRuns[selectedDomain] : undefined;
+  const activeServiceRun = selectedDomain ? serviceRuns[selectedDomain] : undefined;
   const liveCount = selectedResults.filter(item => typeof item !== 'string' && item.status === 'live').length;
   const unknownCount = selectedResults.filter(item => typeof item !== 'string' && item.status === 'unknown').length;
   const healthySources = activeMeta?.sources.filter(source => source.ok).length || 0;
@@ -651,7 +781,7 @@ function App() {
   const hasServiceResults = selectedDetails.some(detail =>
     detail.ip !== undefined || detail.ports !== undefined || detail.technologies !== undefined
   );
-  const serviceScanRunning = selectedDetails.some(detail => detail.analyzing || detail.techAnalyzing);
+  const serviceScanRunning = Boolean(activeServiceRun?.running) || selectedDetails.some(detail => detail.analyzing || detail.techAnalyzing);
   const headerScores = selectedDetails
     .map(detail => detail.security?.score)
     .filter((score): score is number => typeof score === 'number');
@@ -878,12 +1008,14 @@ function App() {
                   {subdomains[selectedDomain] && subdomains[selectedDomain].length > 0 && (
                     <div className="analysis-action-group" aria-label="Hedef analiz işlemleri">
                       <button
-                        className="btn btn-secondary analysis-action"
+                        className={`btn btn-secondary analysis-action ${serviceScanRunning ? 'is-cancel' : ''}`}
                         onClick={handleAnalyzeAll}
-                        disabled={serviceScanRunning || activeRun?.running}
+                        disabled={activeRun?.running}
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
-                        {serviceScanRunning ? 'Servisler taranıyor' : 'Servisleri tara'}
+                        {serviceScanRunning
+                          ? `Taramayı iptal et (${activeServiceRun?.completed || 0}/${activeServiceRun?.total || 0})`
+                          : 'Servisleri tara'}
                       </button>
                       <button
                         className="btn btn-advanced analysis-action"
@@ -916,16 +1048,21 @@ function App() {
                 </div>
               </div>
 
-              {(activeMeta || activeRun) && (
+              {(activeMeta || activeRun || activeServiceRun) && (
                 <section className="intel-strip" aria-live="polite">
                   <div className="intel-stat"><span>Kaynaklar</span><strong>{healthySources}<small>/{activeMeta?.sources.length || 0}</small></strong></div>
                   <div className="intel-stat"><span>DNS canlı</span><strong>{liveCount}</strong></div>
                   <div className="intel-stat"><span>Bekleyen</span><strong>{unknownCount}</strong></div>
                   <div className="intel-stat"><span>Brute keşfi</span><strong>{activeMeta?.bruteSkipped === 'wildcard' ? 'Atlandı' : (activeMeta?.bruteCount ?? '—')}</strong></div>
-                  <div className={`intel-state ${activeRun?.running ? 'is-running' : ''}`}>
-                    <span>{activeRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
-                    {activeRun?.running && activeRun.total > 0 && <strong>{activeRun.completed}/{activeRun.total}</strong>}
-                    <div className="signal-track"><i style={{ width: activeRun?.running && activeRun.total ? `${Math.max(4, (activeRun.completed / activeRun.total) * 100)}%` : '100%' }}></i></div>
+                  <div className={`intel-state ${activeRun?.running || activeServiceRun?.running ? 'is-running' : ''}`}>
+                    <span>{activeRun?.running ? activeRun.stage : activeServiceRun?.stage || activeRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
+                    {activeRun?.running && activeRun.total > 0 ? <strong>{activeRun.completed}/{activeRun.total}</strong> :
+                      activeServiceRun?.running && activeServiceRun.total > 0 ? <strong>{activeServiceRun.completed}/{activeServiceRun.total}</strong> : null}
+                    <div className="signal-track"><i style={{ width: activeRun?.running && activeRun.total
+                      ? `${Math.max(4, (activeRun.completed / activeRun.total) * 100)}%`
+                      : activeServiceRun?.running && activeServiceRun.total
+                        ? `${Math.max(4, (activeServiceRun.completed / activeServiceRun.total) * 100)}%`
+                        : '100%' }}></i></div>
                   </div>
                 </section>
               )}
@@ -1072,6 +1209,7 @@ function App() {
                     </div>
                     
                     <div className="scope-section">
+                        {activeServiceRun?.error && <div className="operation-error">{activeServiceRun.error}</div>}
                         {activeRun?.error && <div className="operation-error">{activeRun.error}</div>}
 
                         {activeMeta?.sources.length ? (

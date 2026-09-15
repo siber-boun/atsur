@@ -12,7 +12,7 @@ router.get('/api/tech', async (req, res) => {
   const subdomain = req.query.subdomain as string;
   if (!subdomain || !isValidDomain(subdomain)) return res.status(400).json({ error: 'Geçerli bir subdomain gerekli' });
   const resolved = await resolvePublic(subdomain);
-  if (resolved.blocked) return res.json({ technologies: [], ...(resolved.reason === 'private-ip' ? { blocked: 'private-ip' } : {}) });
+  if (resolved.blocked) return res.json([]);
   const ip = resolved.ips[0];
   try {
     const detected = await httpPool.run(async () => {
