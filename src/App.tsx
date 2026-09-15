@@ -308,8 +308,7 @@ function App() {
   const [scanMeta, setScanMeta] = useState<Record<string, ScanMeta>>({});
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
   const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
-  const [scopeOutput, setScopeOutput] = useState<string>('');
-  const [showScope, setShowScope] = useState<boolean>(false);
+  const [scopeVisibleForDomain, setScopeVisibleForDomain] = useState<string | null>(null);
   const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
   
   const isLoginValid = email.trim().length > 0 && password.length > 0;
@@ -500,6 +499,7 @@ function App() {
 
   const handleDomainClick = (domain: string) => {
     setSelectedDomain(domain);
+    setScopeVisibleForDomain(null);
     fetchSubdomains(domain);
   };
 
@@ -679,13 +679,13 @@ function App() {
       }
   };
 
-  const handleGenerateScope = () => {
-      if (!selectedDomain || !subdomains[selectedDomain]) return;
+  const getScopeOutput = (domain: string): string => {
+      if (!subdomains[domain]) return '';
       
       const excludedPrefixes = ['mail.', 'webmail.', 'smtp.', 'pop.', 'pop3.', 'imap.', 'ns.', 'ns1.', 'ns2.', 'dns.', 'mx.'];
       const validSubdomains: string[] = [];
 
-      const subs = subdomains[selectedDomain];
+      const subs = subdomains[domain];
       
       subs.forEach(item => {
           const isLegacyString = typeof item === 'string';
@@ -708,8 +708,14 @@ function App() {
           }
       });
 
-      setScopeOutput(validSubdomains.join(', '));
-      setShowScope(true);
+      return [...new Set(validSubdomains)].sort().join(', ');
+  };
+
+  const scopeOutput = selectedDomain ? getScopeOutput(selectedDomain) : '';
+
+  const handleGenerateScope = () => {
+      if (!selectedDomain || !subdomains[selectedDomain]) return;
+      setScopeVisibleForDomain(selectedDomain);
   };
 
   if (new URLSearchParams(window.location.search).get('view') === 'design-process') {
@@ -1389,7 +1395,7 @@ function App() {
                           </section>
                         )}
 
-                        {showScope && (
+                        {scopeVisibleForDomain === selectedDomain && (
                             <div className="scope-output-box fade-in">
                                 <div className="scope-header">
                                     <h4>Geçerli OSINT Kapsamı</h4>
