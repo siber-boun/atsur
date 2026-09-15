@@ -691,9 +691,10 @@ function App() {
           const isExcluded = excludedPrefixes.some(prefix => sub.toLowerCase().startsWith(prefix));
           if (isExcluded) return;
 
-          // 2. Sadece aktif portu/web servisi olanları ekle
+          // 2. HTTP/HTTPS olduğu doğrulanmış portu olanları ekle. HTTP 202, 204,
+          // 401 vb. geçerli web yanıtlarıdır; yalnız 200/201 veya 3xx-5xx ile sınırlamayız.
           if (detail && detail.ports && detail.ports.length > 0) {
-              const hasActiveWeb = detail.ports.some(p => p.status === 200 || p.status === 201 || String(p.status).startsWith('3') || String(p.status).startsWith('4') || String(p.status).startsWith('5'));
+              const hasActiveWeb = detail.ports.some(p => p.isWeb === true || p.protocol === 'http:' || p.protocol === 'https:');
               if (hasActiveWeb) {
                   validSubdomains.push(sub);
               }
