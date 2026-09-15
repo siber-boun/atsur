@@ -682,6 +682,24 @@ function App() {
   const liveCount = selectedResults.filter(item => typeof item !== 'string' && item.status === 'live').length;
   const unknownCount = selectedResults.filter(item => typeof item !== 'string' && item.status === 'unknown').length;
   const healthySources = activeMeta?.sources.filter(source => source.ok).length || 0;
+  const selectedDetails = selectedResults.map(item => {
+    const sub = typeof item === 'string' ? item : item.subdomain;
+    return subdomainDetails[sub];
+  }).filter(Boolean);
+  const hasServiceResults = selectedDetails.some(detail =>
+    detail.ip !== undefined || detail.ports !== undefined || detail.technologies !== undefined
+  );
+  const serviceScanRunning = selectedDetails.some(detail => detail.analyzing || detail.techAnalyzing);
+  const headerScores = selectedDetails
+    .map(detail => detail.security?.score)
+    .filter((score): score is number => typeof score === 'number');
+  const averageHeaderScore = headerScores.length
+    ? Math.round(headerScores.reduce((sum, score) => sum + score, 0) / headerScores.length)
+    : null;
+  const advancedAnalyzedCount = selectedDetails.filter(detail => detail.ssl || detail.security || detail.waf).length;
+  const validSslCount = selectedDetails.filter(detail => detail.ssl?.valid).length;
+  const wafCount = selectedDetails.filter(detail => detail.waf?.detected).length;
+  const hasAdvancedResults = Boolean(activeRun || emailSecurity[selectedDomain || ''] || advancedAnalyzedCount);
 
   // Dashboard View
   return (
@@ -896,21 +914,42 @@ function App() {
                   {subdomains[selectedDomain] && <span className="results-stats-badge">{subdomains[selectedDomain].length} varlık</span>}
                   
                   {subdomains[selectedDomain] && subdomains[selectedDomain].length > 0 && (
-                    <button 
-                      className="btn btn-inline"
-                      onClick={handleAnalyzeAll}
-                    >
-                      Servisleri tara
-                    </button>
+                    <div className="analysis-action-group" aria-label="Hedef analiz işlemleri">
+                      <button
+                        className="btn btn-secondary analysis-action"
+                        onClick={handleAnalyzeAll}
+                        disabled={serviceScanRunning || activeRun?.running}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+                        {serviceScanRunning ? 'Servisler taranıyor' : 'Servisleri tara'}
+                      </button>
+                      <button
+                        className="btn btn-advanced analysis-action"
+                        onClick={handleAdvancedAnalysis}
+                        disabled={activeRun?.running || serviceScanRunning}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
+                        {activeRun?.running ? 'Analiz sürüyor' : 'Tam kapsamlı analiz'}
+                      </button>
+                      <button
+                        className="btn btn-secondary analysis-action"
+                        onClick={handleGenerateScope}
+                        disabled={!hasServiceResults || serviceScanRunning}
+                        title={!hasServiceResults ? 'Kapsam oluşturmak için önce servisleri tarayın' : 'Aktif web sunucularından kapsam oluştur'}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>
+                        Kapsam oluştur
+                      </button>
+                    </div>
                   )}
 
                   <button 
-                    className="btn-text" 
+                    className="btn-text refresh-action"
                     onClick={() => fetchSubdomains(selectedDomain, true)}
                     title="Yenile"
+                    aria-label="Hedef verilerini yenile"
                   >
                     <svg xmlns="http://www.w3.org/0000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                    Yenile
                   </button>
                 </div>
               </div>
@@ -958,6 +997,13 @@ function App() {
                   </div>
                 ) : subdomains[selectedDomain] && subdomains[selectedDomain].length > 0 ? (
                   <>
+                    <div className="result-section-heading">
+                      <div>
+                        <span>Servis keşfi</span>
+                        <h4>Ağ ve uygulama yüzeyi</h4>
+                      </div>
+                      <p>IP adresleri, web portları, HTTP yanıtları ve tespit edilen teknolojiler.</p>
+                    </div>
                     <div className="subdomain-list">
                       {subdomains[selectedDomain].map((item, idx) => {
                         // Geriye dönük uyumluluk: Eski localStorage verisi string dizisi olabilir
@@ -967,6 +1013,9 @@ function App() {
                         const itemIp = isLegacyString ? undefined : item.ip;
                         
                         const detail = subdomainDetails[sub];
+                        const serviceTechnologies = (detail?.technologies || []).filter(
+                          technology => !technology.name.toLowerCase().includes('cloudflare')
+                        );
 
                         let sourceBadgeClass = 'source-crt';
                         let sourceLabel = source || 'Pasif kaynak';
@@ -994,12 +1043,6 @@ function App() {
                                   <div className="detail-rows">
                                     <div className="detail-row">
                                       <span className="ip-badge">{detail.ip || itemIp || 'DNS Çözülemedi'}</span>
-                                      {detail.isCloudflare && (
-                                        <span className="cf-badge" title="Cloudflare Koruması Aktif">
-                                          <svg xmlns="http://www.w3.org/0000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.5 19c2.5 0 4.5-2 4.5-4.5a4.5 4.5 0 0 0-4-4.43V10a5 5 0 0 0-9.8-1.4 3.5 3.5 0 0 0-5.7 2.4A4.5 4.5 0 0 0 6.5 19h11Z"/></svg>
-                                          Cloudflare
-                                        </span>
-                                      )}
                                     </div>
                                     
                                     {detail.ports && detail.ports.length > 0 ? (
@@ -1034,41 +1077,8 @@ function App() {
                                         <span className="no-ports-text">Açık web servisi bulunamadı</span>
                                         )}
 
-                                        {detail.advancedAnalyzing && (
-                                        <span className="analyzing-text" style={{ marginTop: '0.5rem' }}>Gelişmiş analiz yapılıyor...</span>
-                                        )}
-
-                                        {!detail.advancedAnalyzing && detail.ssl && (
-                                        <div className="advanced-stats-container">
-                                          <div className="advanced-row">
-                                              <span className="adv-label">SSL:</span>
-                                              <span className={`status-badge-detailed ${detail.ssl.valid ? 'status-badge-green' : 'status-badge-red'}`}>{detail.ssl.valid ? 'Geçerli' : 'Geçersiz'}</span>
-                                              <span className="adv-value">({detail.ssl.daysLeft} gün, {detail.ssl.issuer})</span>
-                                              <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span>
-                                          </div>
-                                          {detail.security && (
-                                              <div className="advanced-row">
-                                                  <span className="adv-label">HTTP Header Güvenliği:</span>
-                                                  <span className="adv-value">Skor: {detail.security.score}/100</span>
-                                                  <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
-                                                  {detail.security.missing && detail.security.missing.length > 0 && (
-                                                      <span className="missing-headers" title={detail.security.missing.join(', ')}>
-                                                          Eksik: {detail.security.missing.slice(0, 2).join(', ')}{detail.security.missing.length > 2 ? '...' : ''}
-                                                      </span>
-                                                  )}
-                                              </div>
-                                          )}
-                                          {detail.waf && detail.waf.detected && (
-                                              <div className="advanced-row">
-                                                  <span className="adv-label">WAF:</span>
-                                                  <span className="cf-badge">{detail.waf.name} Korumalı</span>
-                                              </div>
-                                          )}
-                                        </div>
-                                        )}
-
-                                        {detail.technologies && detail.technologies.length > 0 && (                                      <div className="tech-container">
-                                          {detail.technologies.map((t, tIdx) => {
+                                        {serviceTechnologies.length > 0 && (                                      <div className="tech-container">
+                                          {serviceTechnologies.map((t, tIdx) => {
                                               let techClass = 'tech-gray';
                                               switch(t.category) {
                                                   case 'CMS': techClass = 'tech-purple'; break;
@@ -1100,17 +1110,6 @@ function App() {
                     </div>
                     
                     <div className="scope-section">
-                        <div className="action-buttons-row">
-                            <button className="btn btn-secondary" onClick={handleGenerateScope} style={{ width: 'auto' }}>
-                                <svg xmlns="http://www.w3.org/0000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                                Kapsam Oluştur (Aktif Web Sunucuları)
-                            </button>
-                            <button className="btn btn-advanced" onClick={handleAdvancedAnalysis} disabled={activeRun?.running}>
-                                <svg xmlns="http://www.w3.org/0000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
-                                {activeRun?.running ? 'Analiz sürüyor' : 'Tam kapsamlı analiz'}
-                            </button>
-                        </div>
-
                         {activeRun?.error && <div className="operation-error">{activeRun.error}</div>}
 
                         {activeMeta?.sources.length ? (
@@ -1128,7 +1127,37 @@ function App() {
                             </div>
                           </div>
                         ) : null}
-                        
+
+                        {hasAdvancedResults && (
+                          <section className="comprehensive-analysis fade-in" aria-labelledby="comprehensive-analysis-title">
+                            <div className="comprehensive-heading">
+                              <div>
+                                <span>Güvenlik değerlendirmesi</span>
+                                <h4 id="comprehensive-analysis-title">Tam kapsamlı analiz</h4>
+                              </div>
+                              <p>HTTP header güvenliği, SSL durumu, WAF ve e-posta kontrolleri tek görünümde.</p>
+                            </div>
+
+                            <div className="security-metrics" aria-label="Güvenlik analizi özeti">
+                              <div className="security-metric">
+                                <span>Analiz edilen</span>
+                                <strong>{advancedAnalyzedCount}<small>/{selectedResults.length}</small></strong>
+                              </div>
+                              <div className="security-metric security-metric-score">
+                                <span>Header ortalaması</span>
+                                <strong>{averageHeaderScore ?? '—'}<small>{averageHeaderScore !== null ? '/100' : ''}</small></strong>
+                                <i><b style={{ width: `${averageHeaderScore ?? 0}%` }}></b></i>
+                              </div>
+                              <div className="security-metric">
+                                <span>Geçerli SSL</span>
+                                <strong>{validSslCount}</strong>
+                              </div>
+                              <div className="security-metric">
+                                <span>WAF bulunan</span>
+                                <strong>{wafCount}</strong>
+                              </div>
+                            </div>
+
                         {emailSecurity[selectedDomain] && (
                             <div className="email-security-box fade-in">
                                 <h4>E-Posta Güvenlik Skoru ({selectedDomain}) <span className={`grade-badge grade-${emailSecurity[selectedDomain].grade}`}>{emailSecurity[selectedDomain].grade}</span></h4>
@@ -1153,10 +1182,13 @@ function App() {
                         {subdomains[selectedDomain] && subdomains[selectedDomain].some(item => {
                             const sub = typeof item === 'string' ? (item as string) : item.subdomain;
                             const detail = subdomainDetails[sub];
-                            return detail && (detail.ssl || detail.security || detail.advancedAnalyzing);
+                            return detail && (detail.ssl || detail.security || detail.waf || detail.advancedAnalyzing);
                         }) && (
                             <div className="advanced-summary-box fade-in">
-                                <h4>Gelişmiş Analiz Özeti</h4>
+                                <div className="advanced-table-heading">
+                                  <h5>Subdomain güvenlik detayları</h5>
+                                  <span>{advancedAnalyzedCount} sonuç</span>
+                                </div>
                                 <div className="table-responsive">
                                     <table className="summary-table">
                                         <thead>
@@ -1164,7 +1196,7 @@ function App() {
                                                 <th>Subdomain</th>
                                                 <th>SSL Skoru</th>
                                                 <th>Sertifika</th>
-                                                <th>HTTP Header Skoru</th>
+                                                <th>HTTP Header Güvenliği</th>
                                                 <th>Eksik Headerlar</th>
                                                 <th>WAF Koruması</th>
                                             </tr>
@@ -1174,7 +1206,7 @@ function App() {
                                                 const sub = typeof item === 'string' ? (item as string) : item.subdomain;
                                                 const detail = subdomainDetails[sub];
                                                 
-                                                if (!detail || (!detail.ssl && !detail.security && !detail.advancedAnalyzing)) return null;
+                                                if (!detail || (!detail.ssl && !detail.security && !detail.waf && !detail.advancedAnalyzing)) return null;
 
                                                 return (
                                                     <tr key={idx}>
@@ -1190,9 +1222,15 @@ function App() {
                                                                 </span>
                                                             ) : <span className="text-muted">-</span>}
                                                         </td>
-                                                        <td>
+                                                        <td className="col-header-score">
                                                             {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
-                                                             detail.security ? <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span> : <span className="text-muted">-</span>}
+                                                             detail.security ? (
+                                                               <div className="header-score">
+                                                                 <span><strong>{detail.security.score}</strong>/100</span>
+                                                                 <i><b style={{ width: `${detail.security.score}%` }}></b></i>
+                                                                 <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
+                                                               </div>
+                                                             ) : <span className="text-muted">-</span>}
                                                         </td>
                                                         <td className="col-missing">
                                                             {detail.security?.missing ? (
@@ -1214,6 +1252,8 @@ function App() {
                                     </table>
                                 </div>
                             </div>
+                        )}
+                          </section>
                         )}
 
                         {showScope && (

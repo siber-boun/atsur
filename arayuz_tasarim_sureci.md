@@ -242,6 +242,64 @@ npm run build
 
 Repo genelindeki lint komutu, tasarım çalışmasından önce mevcut olan TypeScript/ESLint sorunları nedeniyle başarısız olmaya devam etmektedir. Arayüz üretim derlemesi başarılıdır.
 
+## 12. Servis ve güvenlik sonuçlarının yeniden gruplandırılması
+
+Kullanım sırasında servis keşfi ile güvenlik değerlendirmesinin aynı varlık kartında iç içe geçtiği görüldü. Özellikle Cloudflare bilgisi hem basit servis taramasında hem de WAF sonucunda gösteriliyor; HTTP Header Güvenliği ise hem varlık kartlarında hem gelişmiş analiz tablosunda tekrar ediyordu. Uzun hedef listelerinde **Tam kapsamlı analiz** ve **Kapsam oluştur** eylemleri sayfanın altında kaldığı için bulunmaları da zorlaşıyordu.
+
+Bu gözlemler sonucunda bilgi mimarisi aşağıdaki şekilde güncellendi:
+
+```text
+Aktif hedef
+├── Servisleri tara
+├── Tam kapsamlı analiz
+├── Kapsam oluştur
+└── Yenile
+
+Servis keşfi
+└── IP · Port · HTTP durumu · Teknoloji
+
+Tam kapsamlı analiz
+└── HTTP Header · SSL · WAF · E-posta güvenliği
+```
+
+### Üst eylem grubu
+
+- **Servisleri tara**, **Tam kapsamlı analiz** ve **Kapsam oluştur** butonları aktif hedef başlığına taşındı.
+- Yenile işlemi ayrı bir ikon düğmesi olarak en sağda bırakıldı.
+- Devam eden taramalar sırasında çakışabilecek eylemler pasif hale getirildi.
+- **Kapsam oluştur**, servis taraması tamamlanana kadar pasif kalır ve kullanıcıya önce servisleri taraması gerektiğini açıklar.
+- Mobil görünümde eylemler tek sütuna dönüşerek dokunma alanlarını korur.
+
+### Servis keşfi
+
+Servis kartları yalnızca ağ ve uygulama yüzeyini gösterir:
+
+- IP adresi
+- Açık web portları
+- HTTP yanıt kodları
+- Tespit edilen teknolojiler
+
+Cloudflare rozeti, SSL bilgisi, HTTP Header skoru ve WAF bilgisi servis kartlarından kaldırıldı. Böylece servis keşfi “hangi sistemler erişilebilir?” sorusuna odaklandı.
+
+### Cloudflare ve WAF gösterimi
+
+Basit `isCloudflare` sinyali bir CDN veya ters proxy kullanımını gösterebilir; tek başına WAF'ın etkin olduğunu garanti etmez. Bu nedenle Cloudflare artık yalnızca gelişmiş analizin `waf` sonucunda tespit edilirse **WAF** sütununda gösterilir. Teknoloji listesindeki Cloudflare etiketi de tekrar oluşmaması için servis görünümünden filtrelendi.
+
+### Tam kapsamlı analiz yüzeyi
+
+Güvenlik bulguları ayrı ve daha belirgin bir yüzeyde toplandı. Üst özet şeridinde:
+
+- Analiz edilen subdomain sayısı
+- Ortalama HTTP Header güvenlik skoru
+- Geçerli SSL sayısı
+- WAF bulunan hedef sayısı
+
+gösterilir.
+
+Subdomain tablosunda HTTP Header sonucu artık yalnızca harf notuyla değil, `puan/100`, görsel skor çizgisi ve harf notu birlikte kullanılarak sunulur. Eksik header etiketleri, SSL durumu ve WAF sonucu aynı tabloda korunur. Cloudflare adı yalnızca WAF sonucu olarak tek yerde görünür.
+
+Bu güncellemede Figma tabanlı görsel dil değiştirilmedi. Ana arka plan, panel renkleri, neon turkuaz vurgu, Inter ve JetBrains Mono rolleri, ince sınırlar ve operasyon konsolu karakteri aynen korundu.
+
 ## Sonuç
 
 Figma Make referansındaki koyu OSINT konsolu dili, mevcut uygulamanın gerçek veri ve analiz işlevleriyle birleştirildi. Tasarım yalnızca görsel olarak kopyalanmadı; ürünün domain ekleme, hedef seçme ve analiz sonuçlarını inceleme görevlerine göre yeniden yapılandırıldı.
