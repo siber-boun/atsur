@@ -1055,7 +1055,11 @@ function App() {
                   <div className="intel-stat"><span>Bekleyen</span><strong>{unknownCount}</strong></div>
                   <div className="intel-stat"><span>Brute keşfi</span><strong>{activeMeta?.bruteSkipped === 'wildcard' ? 'Atlandı' : (activeMeta?.bruteCount ?? '—')}</strong></div>
                   <div className={`intel-state ${activeRun?.running || activeServiceRun?.running ? 'is-running' : ''}`}>
-                    <span>{activeRun?.running ? activeRun.stage : activeServiceRun?.stage || activeRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
+                    <span>{activeRun?.running
+                      ? activeRun.stage
+                      : activeServiceRun?.running
+                        ? activeServiceRun.stage
+                        : activeRun?.stage || activeServiceRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
                     {activeRun?.running && activeRun.total > 0 ? <strong>{activeRun.completed}/{activeRun.total}</strong> :
                       activeServiceRun?.running && activeServiceRun.total > 0 ? <strong>{activeServiceRun.completed}/{activeServiceRun.total}</strong> : null}
                     <div className="signal-track"><i style={{ width: activeRun?.running && activeRun.total
