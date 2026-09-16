@@ -721,7 +721,7 @@ function App() {
               const sub = item.subdomain;
               setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], advancedAnalyzing: true } }));
               try {
-                const data = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/advanced?subdomain=${sub}`, {}, 15000);
+                const data = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/advanced?subdomain=${sub}`, {}, 45000);
                 setSubdomainDetails(prev => ({
                   ...prev,
                   [sub]: {
@@ -870,6 +870,13 @@ function App() {
     ? Math.round(headerScores.reduce((sum, score) => sum + score, 0) / headerScores.length)
     : null;
   const advancedAnalyzedCount = selectedDetails.filter(detail => detail.ssl || detail.security || detail.waf).length;
+  const isBrowserVerified = (detail: SubdomainDetail | undefined) => Boolean(detail?.ports?.some(
+    port => port.verificationSource === 'browser' && port.protocol === 'https:' && port.isWeb === true
+  ));
+  const hasSecurityDetail = (detail: SubdomainDetail | undefined) => Boolean(detail && (
+    detail.ssl || detail.security || detail.waf || detail.technologies || detail.advancedAnalyzing || isBrowserVerified(detail)
+  ));
+  const securityDetailCount = selectedDetails.filter(detail => hasSecurityDetail(detail)).length;
   const validSslCount = selectedDetails.filter(detail => detail.ssl?.valid).length;
   const wafCount = selectedDetails.filter(detail => detail.waf?.detected).length;
   const hasAdvancedResults = Boolean(activeRun || emailSecurity[selectedDomain || ''] || advancedAnalyzedCount);
@@ -1380,12 +1387,12 @@ function App() {
                         {subdomains[selectedDomain] && subdomains[selectedDomain].some(item => {
                             const sub = typeof item === 'string' ? (item as string) : item.subdomain;
                             const detail = subdomainDetails[sub];
-                            return detail && (detail.ssl || detail.security || detail.waf || detail.technologies || detail.advancedAnalyzing);
+                            return hasSecurityDetail(detail);
                         }) && (
                             <div className="advanced-summary-box fade-in">
                                 <div className="advanced-table-heading">
                                   <h5>Subdomain güvenlik detayları</h5>
-                                  <span>{advancedAnalyzedCount} sonuç</span>
+                                  <span>{securityDetailCount} sonuç</span>
                                 </div>
                                 <div className="table-responsive">
                                     <table className="summary-table">
@@ -1405,21 +1412,22 @@ function App() {
                                                 const sub = typeof item === 'string' ? (item as string) : item.subdomain;
                                                 const detail = subdomainDetails[sub];
                                                 
-                                                if (!detail || (!detail.ssl && !detail.security && !detail.waf && !detail.technologies && !detail.advancedAnalyzing)) return null;
+                                                if (!detail || !hasSecurityDetail(detail)) return null;
+                                                const browserVerified = isBrowserVerified(detail);
 
                                                 return (
                                                     <tr key={idx}>
                                                         <td className="col-subdomain">{sub}</td>
                                                         <td>
                                                             {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
-                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">-</span>}
+                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-cert">
                                                             {detail.ssl ? (
                                                                 <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
                                                                     {detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft}g)` : 'Geçersiz'}
                                                                 </span>
-                                                            ) : <span className="text-muted">-</span>}
+                                                            ) : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
                                                         </td>
                                                         <td className="col-header-score">
                                                             {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
@@ -1429,7 +1437,7 @@ function App() {
                                                                  <i><b style={{ width: `${detail.security.score}%` }}></b></i>
                                                                  <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
                                                                </div>
-                                                             ) : <span className="text-muted">-</span>}
+                                                             ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-missing">
                                                             {detail.security?.missing ? (
@@ -1438,11 +1446,12 @@ function App() {
                                                                         <span key={mIdx} className="missing-tag">{m}</span>
                                                                     ))}
                                                                 </div>
-                                                            ) : <span className="text-muted">-</span>}
+                                                            ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td>
                                                             {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
-                                                             (detail.waf && detail.waf.detected) ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> : <span className="badge-none">Korumasız</span>}
+                                                             detail.waf?.detected ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> :
+                                                             detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-tech-stack">
                                                             {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> :
@@ -1454,7 +1463,7 @@ function App() {
                                                                     return <span key={techIdx} className={`tech-badge ${tech.passive ? 'tech-passive' : 'tech-gray'}`} title={`${tech.category} · ${source}`}>{label}</span>;
                                                                   })}
                                                                 </div>
-                                                              ) : <span className="text-muted">Tespit yok</span>}
+                                                              ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : 'Tespit yok'}</span>}
                                                         </td>
                                                     </tr>
                                                 );
