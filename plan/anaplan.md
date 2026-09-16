@@ -59,7 +59,7 @@ düşünülüyor, bu yüzden veri şekilleri ve depolama arayüzü buna hazır t
 | crt.sh `?q=%.{d}&output=json` | ✅ HTTP 200 | Kullan. **Mevcut kod `?q={d}` sorguluyor; `%.{d}` wildcard kalıbı belirgin şekilde daha fazla kayıt döndürür.** |
 | Certspotter `/v1/issuances?domain={d}&include_subdomains=true&expand=dns_names` | ✅ HTTP 200 | Kullan. Anahtarsız kullanım "kişisel/deneme" şartlı ve sıkı kotalı → **429'u hata değil `skipped` say** |
 | RapidDNS `/subdomain/{d}?full=1` | ✅ HTTP 200, 99 eşleşme | Kullan. HTML kazıma, kırılgan → parser izole edilmeli |
-| urlscan.io `/api/v1/search/?q=domain:{d}` | — | Kullanma (Faz 6'da kaldırıldı) |
+| urlscan.io `/api/v1/search/?q=domain:{d}` | ✅ HTTP 200 | Kullan |
 | **AlienVault OTX** | ❌ **HTTP 429** — `{"detail": "Anonymous access to this endpoint is limited. Please authenticate."}` | **Artık anahtarsız DEĞİL.** Ücretsiz OTX hesabı anahtarıyla, key-gated kaynak olarak ekle |
 | **Anubis (jldc.me)** | ❌ 301 → `jonlu.ca` → **403 (Cloudflare)** | **Ölü. Kapsama alma.** |
 | Wayback CDX | ❌ İki denemede de HTTP 000 (45 sn timeout) | Düşük öncelik. Sert timeout + boyut tavanıyla opsiyonel |
@@ -73,7 +73,7 @@ CLI araçları için derlenmiştir. Bu proje ise **paylaşımlı bir Render data
 
 1. Google/Bing `site:` kazıması datacenter IP'sinden neredeyse anında CAPTCHA'ya takılır → kapsam dışı.
 2. Anahtarsız kaynakların kotası **tüm kullanıcılar arasında ortaktır**. Tek bir yoğun kullanıcı
-   servisi herkes için bozar. Certspotter (anonim) ilk 429 yiyecek kaynaklardandır.
+   servisi herkes için bozar. Certspotter (anonim) ve urlscan ilk 429 yiyecek olanlardır.
 3. Bu nedenle her kaynak, **bağımsız hata veren "en iyi çaba" eklentisi** olarak tasarlanmalıdır.
    Mevcut koddaki `Promise.allSettled` deseni (`index.ts:131`) bunun doğru temelidir.
 

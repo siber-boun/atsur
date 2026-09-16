@@ -276,10 +276,10 @@ Supabase geçişinde yalnızca `SupabaseStore implements UserStore` yazılır ve
 
 ### Browserless erişim ayarı
 
-Faz 6 revizyonunda urlscan.io fallback'i kaldırılmıştır. Render ortamındaki
+Faz 6 revizyonunda Cloudflare Worker kaldırılmıştır. Render ortamında
 `BROWSERLESS_URL` ve `BROWSERLESS_API_KEY` yalnız backend tarafından kullanılır;
-istemciye, loglara veya API yanıtına aktarılmaz. Browserless yalnız kullanıcının
-tarayıcısı hedef erişimini doğruladıktan sonra çağrılır.
+istemciye, loglara veya API yanıtına aktarılmaz. Mevcut port grubu, URL
+doğrulama ve temizlenmiş yanıt sözleşmesi korunur.
 
 ## 9. Riskler ve geri alma
 
