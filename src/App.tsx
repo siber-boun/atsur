@@ -80,13 +80,19 @@ interface SubdomainDetail {
   ssl?: any;
   security?: any;
   waf?: any;
+  cookies?: any[];
+  cors?: any;
   advancedAnalyzing?: boolean;
 }
 
 interface EmailSecurityInfo {
-  spf: { hasRecord: boolean, hasMinusAll: boolean };
-  dmarc: { hasRecord: boolean, policy: string };
+  spf: { hasRecord: boolean, hasMinusAll: boolean, all?: string | null, lookupCount?: number, permerror?: boolean, permerrorReason?: string, truncated?: boolean };
+  dmarc: { hasRecord: boolean, policy: string, percentage?: number, aggregateReports?: boolean, forensicReports?: boolean, adkim?: string, aspf?: string };
   dkim: { hasRecord: boolean };
+  dnssec?: boolean | null;
+  mtaSts?: { hasRecord: boolean, mode?: string, policyFetched: boolean };
+  tlsRpt?: { hasRecord: boolean };
+  caa?: { hasRecord: boolean, issuers: string[] };
   score: number;
   grade: string;
 }
@@ -655,6 +661,8 @@ function App() {
                     ssl: data.ssl,
                     security: data.advanced?.security,
                     waf: data.advanced?.waf,
+                    cookies: data.advanced?.cookies,
+                    cors: data.advanced?.cors,
                     technologies: Array.isArray(data.technologies) ? data.technologies : [],
                     advancedAnalyzing: false
                   }

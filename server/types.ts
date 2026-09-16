@@ -61,3 +61,21 @@ export interface ScanResponse {
   results: SubdomainData[];
   truncatedValidation: boolean;
 }
+
+export type { CookieFinding } from './lib/cookies';
+export type { CorsFinding } from './lib/cors';
+export type { DmarcResult } from './lib/dmarc';
+export type { SpfResult } from './lib/spf';
+export type { SslInfo } from './lib/tls';
+
+export interface EmailSecurityInfo {
+  spf: import('./lib/spf').SpfResult & { hasMinusAll: boolean };
+  dmarc: import('./lib/dmarc').DmarcResult;
+  dkim: { hasRecord: boolean };
+  dnssec: boolean | null;
+  mtaSts: { hasRecord: boolean; mode?: 'enforce' | 'testing' | 'none'; policyFetched: boolean };
+  tlsRpt: { hasRecord: boolean };
+  caa: { hasRecord: boolean; issuers: string[] };
+  score: number;
+  grade: string;
+}
