@@ -111,16 +111,16 @@ değil, dokümanı düzeltin** (Faz 0).
 | **3** | DNS doğrulama + wildcard tespiti | 2 | Asıl doğruluk kazancı. 4, 5 ve 6'dan önce gelmeli |
 | **4** | Kaynak mimarisi + yeni kaynaklar | 3 | Önce doğrulama olmazsa yeni kaynaklar gürültüyü çoğaltır |
 | **5** | Tarama orkestrasyonu + brute-force | 3, 4 | Wildcard tespiti olmadan brute-force binlerce false positive üretir |
-| **6** | Subdomain takeover tespiti | 3 | 3'ün CNAME zincirine muhtaç. **Tek en yüksek değerli özellik** |
-| **7** | TLS / e-posta / cookie / CORS derinliği | 1, 2 | Bağımsız ve paralelleştirilebilir. Takvim sıkışırsa erken kazanç için öne alınabilir |
-| **8** | Frontend | 3, 4, 6 kontratları donmuş olmalı | Backend kontratları sabitlenmeden başlanmamalı |
+| **6** | TLS / e-posta / cookie / CORS derinliği | 1, 2 | Bağımsız ve paralelleştirilebilir. Takvim sıkışırsa erken kazanç için öne alınabilir |
+| **7** | Subdomain takeover tespiti | 3 | 3'ün CNAME zincirine muhtaç. **Tek en yüksek değerli özellik** |
+| **8** | Frontend | 3, 4, 7 kontratları donmuş olmalı | Backend kontratları sabitlenmeden başlanmamalı |
 
 ### Pazarlık konusu olmayan sıralama kuralları
 
 1. **Faz 2 her şeyden önce.** Mevcut kod sınırsız eşzamanlılıkla çalışıyor; üstüne 10 kaynak ve
    brute-force eklemek Render dyno'sunu bellek yetersizliğinden düşürür.
 2. **Faz 3, Faz 5'ten önce.** Wildcard tespiti olmadan brute-force, hiç yayınlamamaktan kötüdür.
-3. **Faz 3, Faz 6'dan önce.** Takeover tespiti CNAME zincirine muhtaçtır.
+3. **Faz 3, Faz 7'den önce.** Takeover tespiti CNAME zincirine muhtaçtır.
 
 ### Deploy sırası (her fazda)
 
@@ -197,8 +197,8 @@ npm run dev                  # frontend -> http://localhost:5173/subdomainfinder
 | `plan_faz3.md` | DNS doğrulama + wildcard tespiti |
 | `plan_faz4.md` | Kaynak mimarisi + yeni kaynaklar |
 | `plan_faz5.md` | Tarama orkestrasyonu + brute-force |
-| `plan_faz6.md` | Subdomain takeover tespiti |
-| `plan_faz7.md` | TLS / e-posta / cookie / CORS derinliği |
+| `plan_faz6.md` | TLS / e-posta / cookie / CORS derinliği |
+| `plan_faz7.md` | Subdomain takeover tespiti |
 | `plan_faz8.md` | Frontend |
 
 Her faz dosyası şu sabit iskeleti kullanır:

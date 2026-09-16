@@ -1,8 +1,8 @@
 # Faz 8 — Frontend
 
 > Ön okuma: `plan/anaplan.md` (özellikle **§6 Yol boyunca korunacak sözleşmeler**),
-> `plan_faz3.md`, `plan_faz5.md`, `plan_faz6.md`.
-> **Bu faz, Faz 3/4/5/6 kontratları donmadan başlamamalıdır.**
+> `plan_faz3.md`, `plan_faz5.md`, `plan_faz7.md`.
+> **Bu faz, Faz 3/4/5/7 kontratları donmadan başlamamalıdır.**
 
 ## 1. Amaç
 
@@ -20,8 +20,8 @@ tek dosyalık değişiklik olacak şekilde hazırlanır.
 ## 2. Ön koşullar
 
 - Faz 3 (`DnsResult`, `status`), Faz 4 (`sources[]`, `/api/sources`), Faz 5 (`ScanResponse`),
-  Faz 6 (`TakeoverFinding`) kontratları donmuş olmalı.
-- Faz 7 alanları opsiyonel olduğundan bu fazdan sonra da eklenebilir.
+  Faz 7 (`TakeoverFinding`) kontratları donmuş olmalı.
+- Faz 6 alanları opsiyonel olduğundan bu fazdan sonra da eklenebilir.
 
 ## 3. Kapsam
 
@@ -145,8 +145,8 @@ export interface SubdomainDetail {   // mevcut alanların hepsi aynen
   ip: string | null; ports?: PortInfo[]; isCloudflare?: boolean; analyzing?: boolean;
   technologies?: TechInfo[]; techAnalyzing?: boolean;
   ssl?: SslInfo; security?: SecurityInfo; waf?: WafInfo; advancedAnalyzing?: boolean;
-  cookies?: CookieFinding[];         // Faz 7
-  cors?: CorsFinding;                // Faz 7
+  cookies?: CookieFinding[];         // Faz 6
+  cors?: CorsFinding;                // Faz 6
   blocked?: 'private-ip';            // Faz 2
 }
 

@@ -17,7 +17,7 @@ Bu faz iki şey ekler:
 2. **Wildcard tespiti:** `*.hedef.com` kaydı olan zone'larda her rastgele isim çözümlenir.
    Bu tespit edilmeden eklenen her yeni kaynak ve özellikle brute-force (Faz 5) çöp üretir.
 
-Ayrıca CNAME zinciri burada yakalanır; **Faz 6'daki takeover tespiti tamamen buna dayanır.**
+Ayrıca CNAME zinciri burada yakalanır; **Faz 7'deki takeover tespiti tamamen buna dayanır.**
 
 ## 2. Ön koşullar
 
@@ -34,7 +34,7 @@ Ayrıca CNAME zinciri burada yakalanır; **Faz 6'daki takeover tespiti tamamen b
 **Bilinçli olarak yapılmayacaklar**
 - Yeni kaynak eklenmeyecek (Faz 4).
 - Brute-force yapılmayacak (Faz 5).
-- Takeover kararı verilmeyecek (Faz 6) — bu faz yalnız **veriyi** (CNAME zinciri, `nxdomainAtEnd`)
+- Takeover kararı verilmeyecek (Faz 7) — bu faz yalnız **veriyi** (CNAME zinciri, `nxdomainAtEnd`)
   üretir, yorumlamaz.
 - `/api/scan`'in yanıt şekli **bu fazda değişmez** (Faz 5'e ait).
 - Frontend'e dokunulmayacak (Faz 8).
@@ -68,7 +68,7 @@ export interface DnsResult {
   status: DnsStatus;
   a: string[];              // çözümlenen IPv4 adresleri
   cname: string[];          // tam zincir, sırayla
-  cnameTarget?: string;     // zincirin son halkası — Faz 6 buna bakar
+  cnameTarget?: string;     // zincirin son halkası — Faz 7 buna bakar
   nxdomainAtEnd?: boolean;  // CNAME var ama son hedef NXDOMAIN -> dangling
   wildcardMatch?: boolean;
 }
@@ -88,7 +88,7 @@ export async function resolveMany(hosts: string[]): Promise<DnsResult[]>;  // dn
 | CNAME zinciri **max derinlik 10** | Döngü koruması |
 
 **CNAME zinciri:** `resolveCname` ile zincir iteratif izlenir. Son hedefin `resolve4`'ü
-NXDOMAIN dönerse `nxdomainAtEnd = true`. **Bu, Faz 6'nın en yüksek değerli sinyalidir**
+NXDOMAIN dönerse `nxdomainAtEnd = true`. **Bu, Faz 7'nin en yüksek değerli sinyalidir**
 (dangling CNAME → takeover adayı) ve hiç HTTP isteği gerektirmez.
 
 **Önbellek:** In-process `Map`, 5 dk TTL, ~5000 giriş tavanı (LRU veya basit FIFO tahliye).
@@ -228,8 +228,8 @@ export function matchesWildcard(result: DnsResult, info: WildcardInfo): boolean;
 
 **Endpoint'ler:** `GET /api/wildcard?domain=`, `POST /api/validate {domain, hosts[]}` (max 150).
 
-> **Faz 6 için kritik:** `cnameTarget` ve `nxdomainAtEnd` alanları takeover tespitinin
-> tek girdisidir; bu alanların anlamı Faz 6 başlayana kadar değiştirilmemelidir.
+> **Faz 7 için kritik:** `cnameTarget` ve `nxdomainAtEnd` alanları takeover tespitinin
+> tek girdisidir; bu alanların anlamı Faz 7 başlayana kadar değiştirilmemelidir.
 
 ## 9. Riskler ve geri alma
 

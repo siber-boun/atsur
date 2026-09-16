@@ -1,260 +1,217 @@
-# Faz 7 — TLS / e-posta / cookie / CORS derinliği
+# Faz 7 — Subdomain takeover tespiti
 
-> Ön okuma: `plan/anaplan.md`, `plan/plan_faz2.md`.
-> Bu fazın dört alt işi **birbirinden bağımsızdır** ve paralel yapılabilir. Faz 3-6'ya bağımlı
-> değildir; takvim sıkışırsa erken kazanç için öne alınabilir.
+> Ön okuma: `plan/anaplan.md`, `plan/plan_faz3.md`.
+> **Bu, projenin ekleyeceği tek en yüksek değerli özelliktir:** ilk kez "liste" değil,
+> eyleme dönüştürülebilir bir **zafiyet** üretilir.
 
 ## 1. Amaç
 
-Mevcut analizler yüzeysel: TLS'te yalnız son kullanma tarihine bakılıyor, e-posta güvenliğinde
-SPF kaydının varlığı ve `-all` içerip içermediği substring ile kontrol ediliyor. Cookie ve CORS
-hiç bakılmıyor — oysa gerekli HTTP başlıkları zaten çekiliyor.
+Subdomain takeover, bir subdomain'in CNAME ile bir bulut servisine (S3, Azure, GitHub Pages…)
+işaret etmesi ama o servisteki kaynağın silinmiş/sahipsiz olmasıdır. Saldırgan o kaynağı kendi
+adına oluşturarak subdomain üzerinde içerik yayınlayabilir — çerez çalma, phishing ve marka
+istismarı için kullanılır.
 
-Bu faz dört alanı derinleştirir. **Hepsinde ortak kural: yeni alanlar opsiyonel ve eklemeli;
-mevcut A-F / A-E not harfleri korunur** (`grade-${x}` CSS sınıfları buna bağlı).
+Faz 3 zaten CNAME zincirini ve `nxdomainAtEnd` bilgisini üretiyor. Bu faz o veriyi **yorumlar**.
+
+**Önemli:** Vakaların büyük bölümü (dangling CNAME) **hiç HTTP isteği gerektirmez** — yalnız
+Faz 3'ün DNS verisiyle tespit edilir. Bu da özelliği ucuz ve hızlı kılar.
 
 ## 2. Ön koşullar
 
-- **Faz 1 ve Faz 2 tamamlanmış olmalı** (`lib/tls.ts` iskeleti, `httpPool`, SSRF koruması).
+- **Faz 3 tamamlanmış olmalı.** `DnsResult.cnameTarget` ve `DnsResult.nxdomainAtEnd` alanları
+  bu fazın tek girdisidir.
+- Faz 2'den `httpPool` mevcut.
 
 ## 3. Kapsam
 
 **Yapılacaklar**
-- **7a.** TLS derinliği: protokol, cipher, zincir, SAN, hostname eşleşmesi, CAA.
-- **7b.** E-posta: gerçek SPF parser (10-lookup limiti), DMARC parser, MTA-STS, TLS-RPT, DNSSEC.
-- **7c.** Cookie güvenlik bayrakları.
-- **7d.** CORS yanlış yapılandırma tespiti.
+- `fingerprints/takeover.ts`: servis parmak izi tablosu.
+- `lib/takeover.ts`: karar ağacı ve güven kademelendirmesi.
+- `/api/scan` akışında CNAME'i olan hostlar için otomatik kontrol.
+- `POST /api/takeover`: yeniden kontrol ve ikinci doğrulama partisi için.
+- `lib/takeover.ts` için birim testleri.
 
 **Bilinçli olarak yapılmayacaklar**
-- Aktif zafiyet sömürüsü yok; yalnız pasif gözlem ve standart uyum kontrolü.
-- Hassas yol taraması (`.git/`, `.env` vb.) **bu fazda yok** — kapsam dışı.
-- UI değişiklikleri Faz 8'e ait.
+- **Takeover'ı doğrulamak için kaynak oluşturma girişimi yapılmayacak** (S3 bucket açma vb.).
+  Bu, hedefin altyapısında değişiklik demektir; araç yalnız **tespit** eder.
+- Kalıp eşleşmesi tek başına "vulnerable" ilan edilmeyecek (§5.2, kural 4).
+- UI (banner, rozet) Faz 8'e ait — bu faz yalnız backend verisi üretir.
 
 ## 4. Dosya manifestosu
 
 **Oluşturulacak:**
 ```
-server/lib/tls.ts          # (Faz 1'de iskelet oluşturulduysa genişletilir)
-server/lib/spf.ts
-server/lib/spf.test.ts
-server/lib/dmarc.ts
-server/lib/cookies.ts
-server/lib/cors.ts
+server/fingerprints/takeover.ts
+server/lib/takeover.ts
+server/lib/takeover.test.ts
+server/routes/takeover.ts        # POST /api/takeover
 ```
 
 **Değiştirilecek:**
 | Dosya | Değişiklik |
 |---|---|
-| `server/routes/advanced.ts` | TLS derinliği + cookie + CORS |
-| `server/routes/emailsec.ts` | Yeni parser'lar + MTA-STS/TLS-RPT/DNSSEC + CAA |
-| `server/types.ts` | `SslInfo`, `EmailSecurityInfo` genişlemesi, `CookieFinding`, `CorsFinding` |
+| `server/routes/scan.ts` | CNAME'i olan hostlar için takeover kontrolü |
+| `server/types.ts` | `TakeoverFinding` tipi, `SubdomainData.takeover?` |
+| `server/index.ts` | Route kaydı |
 
 ## 5. Teknik detay
 
-### 5.1 (7a) TLS derinliği
+### 5.1 `fingerprints/takeover.ts`
+
+Referans: `can-i-take-over-xyz/fingerprints.json` (doğrulandı: 117 kayıt, 41'i `vulnerable: true`,
+36'sı `edge case`). **Yalnızca `vulnerable: true` olanlar yüksek güven bulgusu üretmelidir.**
 
 ```ts
-export interface SslInfo {
-  // --- mevcut alanlar, KORUNUR ---
-  valid: boolean; daysLeft: number; issuer: string; isSelfSigned: boolean; grade: string;
-  // --- yeni, hepsi opsiyonel ---
-  protocol?: string;                 // 'TLSv1.3'
-  cipher?: { name: string; version: string; weak: boolean };
-  legacyProtocols?: { tls10: 'yes' | 'no' | 'unknown'; tls11: 'yes' | 'no' | 'unknown' };
-  chain?: { subject: string; issuer: string }[];
-  chainComplete?: boolean;
-  san?: string[];
-  hostnameMatch?: boolean;
-  caa?: { hasRecord: boolean; issuers: string[] };
-}
-```
-
-**Uyarılar:**
-
-| Konu | Kural |
-|---|---|
-| **Zincir yürüyüşü** | `cert.issuerCertificate` kök sertifikada **kendine işaret eder**. `cert === cert.issuerCertificate` olduğunda durun, yoksa sonsuz döngü |
-| **TLS 1.0/1.1 probu** | Node 18+ varsayılan olarak reddeder. Prob için ayrı bir `tls.connect` gerekir: `minVersion: 'TLSv1'`, `ciphers: 'DEFAULT:@SECLEVEL=0'`. Render'ın OpenSSL derlemesine göre yine başarısız olabilir |
-| **Başarısız prob** | `'unknown'` döndürün. **Asla yanlış `'no'` demeyin** — "TLS 1.0 desteklenmiyor" yanlış bilgisi, bilgi vermemekten kötüdür |
-| **Zayıf cipher** | RC4, 3DES, CBC-SHA1, NULL, EXPORT |
-| **CAA** | `dns.promises.resolveCaa()` — **apex seviyesinde**, her subdomain için tekrarlanmaz. `/api/email-sec` yanıtına konur ("Domain Güvenliği" başlığı altında) |
-
-**Not ayarlaması:** TLS 1.0/1.1 desteği, zayıf cipher ve hostname uyuşmazlığı puan düşürür.
-**A-F harfleri korunur.** `grade-D` / `grade-E` sınıflarının `src/index.css`'te tanımlı olduğu
-doğrulanmalı; yoksa Faz 8'de eklenir.
-
-### 5.2 (7b) E-posta güvenliği
-
-**Mevcut kod `index.ts:426`'da `txt.includes('-all')` substring kontrolü yapıyor** — gerçek bir
-parser değil. Yerine:
-
-**`lib/spf.ts`:**
-
-```ts
-export interface SpfResult {
-  hasRecord: boolean;
-  all: '-all' | '~all' | '?all' | '+all' | null;
-  lookupCount: number;
-  permerror: boolean;
-  permerrorReason?: 'too-many-lookups' | 'multiple-records' | 'syntax';
-  truncated: boolean;
-  raw?: string;
-}
-export async function evaluateSpf(domain: string): Promise<SpfResult>;
-```
-
-| Kural | Açıklama |
-|---|---|
-| **10-lookup limiti** | `include`, `a`, `mx`, `ptr`, `exists`, `redirect` mekanizmaları DNS sorgusu yapar. Özyinelemeli sayılır; **10'u aşarsa `permerror`** = kayıt fiilen geçersizdir. *Çoğu domainin düştüğü, çoğu aracın atladığı bulgudur* |
-| Döngü koruması | Ziyaret edilen `include` hedefleri için `visited` kümesi |
-| Toplam sorgu tavanı | 30; aşılırsa `truncated: true` |
-| `+all` / `?all` | Nötr değil, **bulgudur** (herkesin o domain adına mail atmasına izin verir) |
-| Birden fazla SPF kaydı | `permerror` |
-
-**`lib/dmarc.ts`:** `p=`, `sp=`, `pct=` (`pct<100` + `p=reject` zayıftır), `rua=`/`ruf=` varlığı,
-`adkim`/`aspf` (strict vs relaxed).
-
-**Ek kontroller:**
-| Kontrol | Yöntem |
-|---|---|
-| MTA-STS | `_mta-sts.<domain>` TXT + `https://mta-sts.<domain>/.well-known/mta-sts.txt` → `mode: enforce\|testing\|none` |
-| TLS-RPT | `_smtp._tls.<domain>` TXT |
-| **DNSSEC** | Node'un `dns` modülü AD bit'ini **veremez**. DoH kullanın: `GET https://cloudflare-dns.com/dns-query?name=<d>&type=A` + `Accept: application/dns-json` → yanıttaki `.AD` alanı. Tek ek HTTP çağrısı, bağımlılık yok |
-
-**Yeni skor (100 üzerinden, A-E harfleri korunur):**
-
-| Madde | Puan |
-|---|---|
-| SPF var | 15 |
-| SPF `-all` | 15 (`~all` 8, `+all`/`?all` **0 ve işaretli**) |
-| SPF permerror yok | 10 |
-| DMARC var | 15 |
-| DMARC `p=reject` | 15 (`quarantine` 10) |
-| DMARC `rua` var | 5 |
-| DKIM var | 10 |
-| DNSSEC | 5 |
-| MTA-STS enforce | 5 |
-| TLS-RPT | 5 |
-
-### 5.3 (7c) Cookie bayrakları
-
-`routes/advanced.ts` şu an **HEAD** isteği atıyor. HEAD genelde `Set-Cookie` döndürmez →
-**GET'e geçin**, başlıklar geldikten sonra gövdeyi `destroy()` edin (gövdeye ihtiyaç yok).
-
-```ts
-export interface CookieFinding {
-  name: string; secure: boolean; httpOnly: boolean;
-  sameSite: 'Strict' | 'Lax' | 'None' | null;
-  issues: string[];
-}
-```
-
-Bulgu üretme kuralları:
-- HTTPS yanıtında `Secure` yok
-- Oturum benzeri adda (`/sess|sid|token|auth|jwt/i`) `HttpOnly` yok
-- `SameSite=None` ama `Secure` yok
-
-### 5.4 (7d) CORS yanlış yapılandırması
-
-İstekte `Origin: https://evil-osint-probe.example` başlığı gönderin ve yanıta bakın:
-
-```ts
-export interface CorsFinding {
-  acao: string | null; credentials: boolean; reflectsOrigin: boolean;
-  severity: 'high' | 'medium' | 'info' | 'none';
+export interface TakeoverFingerprint {
+  service: string;                 // 'AWS S3', 'GitHub Pages', ...
+  cname: RegExp[];                 // /\.s3[.-][a-z0-9-]*\.amazonaws\.com$/
+  bodyFingerprints: string[];      // 'NoSuchBucket', "There isn't a GitHub Pages site here"
+  nxdomainIsVulnerable: boolean;   // Azure *.cloudapp.net gibi: NXDOMAIN tek başına yeterli
+  status: 'vulnerable' | 'edge-case';
   note?: string;
 }
+
+export const TAKEOVER_FINGERPRINTS: TakeoverFingerprint[];
 ```
 
-| Durum | Önem |
-|---|---|
-| ACAO saldırgan origin'i **yansıtıyor** + `credentials: true` | **high** |
-| ACAO `*` + `credentials: true` | **high** (tarayıcı reddeder ama yapılandırma hatasıdır) |
-| ACAO `null` | medium |
-| ACAO `*` tek başına | info |
+Başlangıç için ~30 kayıt: AWS S3, CloudFront, Azure (cloudapp / azurewebsites / trafficmanager /
+blob), GitHub Pages, Heroku, Shopify, Fastly, Netlify, Vercel, Zendesk, Readme.io, Surge.sh,
+Tumblr, Unbounce, Statuspage, Pantheon, Ghost, Helpjuice, Desk.com, Bitbucket, WordPress.com,
+Cargo, Webflow.
 
-Her ikisi de `/api/advanced` yanıtında `security` ve `waf`'ın yanına eklenir.
+### 5.2 `lib/takeover.ts` — karar ağacı
+
+```ts
+export interface TakeoverFinding {
+  vulnerable: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  service?: string;
+  cname?: string;
+  reason: 'dangling-cname' | 'fingerprint-match' | 'cname-match-no-fingerprint' | 'none';
+  note?: string;
+}
+
+export async function checkTakeover(dns: DnsResult): Promise<TakeoverFinding>;
+```
+
+**Sıra önemlidir:**
+
+| # | Koşul | Sonuç | HTTP? |
+|---|---|---|---|
+| 1 | CNAME yok | `vulnerable: false`, `reason: 'none'` | Hayır (ucuz çıkış — hostların çoğu burada durur) |
+| 2 | `nxdomainAtEnd === true` | `vulnerable: true`, `confidence: 'high'`, `reason: 'dangling-cname'` | **Hayır** |
+| 3 | `cnameTarget` bir parmak izi kalıbına uyuyor → `https://host` çek, gövdede `bodyFingerprints` ara → bulundu | `vulnerable: true`, `confidence: 'high'`, `reason: 'fingerprint-match'`, `service` dolu | Evet |
+| 4 | Kalıp uydu ama gövde imzası yok | `vulnerable: false`, `confidence: 'low'`, `reason: 'cname-match-no-fingerprint'` | Evet |
+
+> ### ⚠ Pazarlık konusu olmayan kural
+> **Yalnız CNAME kalıbı eşleşmesiyle asla "vulnerable: true" denmeyecektir.**
+> Bir subdomain'in S3'e işaret etmesi normaldir; zafiyet, bucket'ın *sahipsiz* olmasıdır.
+> Takeover tarayıcılarını güvenilmez yapan tam olarak bu ayrımın atlanmasıdır.
+> Yanlış pozitif, eksik bulgudan daha hızlı güven kaybettirir.
+
+**HTTP çağrısı kuralları (adım 3-4):** `httpPool` üzerinden, 5 sn timeout,
+`rejectUnauthorized: false`, **yalnız ilk 32 KB** okunur (gövde büyükse `destroy`).
+
+### 5.3 `/api/scan` entegrasyonu
+
+CNAME'i olan hostlar domain başına genelde birkaç tanedir; bu nedenle takeover kontrolü
+`/api/scan?validate=1` bütçesine sığar:
+
+```ts
+const cnameHosts = results.filter(r => r.cname?.length);
+const findings = await mapPool(cnameHosts, httpPool, r => checkTakeover(r));
+```
+
+`SubdomainData.takeover` alanı **opsiyoneldir**; CNAME'i olmayan kayıtlarda hiç bulunmaz.
+
+### 5.4 `POST /api/takeover`
+
+```
+Body: { "hosts": ["a.example.com", ...] }    // max 25
+-> { "results": Array<{ host: string; finding: TakeoverFinding }> }
+```
+
+Kullanım: Faz 5'teki ikinci doğrulama partisi (150 sonrası) ve kullanıcının "yeniden kontrol et"
+eylemi.
 
 ## 6. Kabul kriterleri
 
-**7a — TLS**
-- [ ] Modern bir site için `protocol: 'TLSv1.3'` ve `cipher.weak: false`.
-- [ ] Zincir yürüyüşü sonsuz döngüye girmiyor (kökte duruyor).
-- [ ] TLS 1.0/1.1 probu başarısızsa `'unknown'` dönüyor, **asla yanlış `'no'` değil**.
-- [ ] `san[]` dolu ve `hostnameMatch` doğru hesaplanıyor.
-- [ ] CAA yalnız apex için sorgulanıyor (N subdomain için N sorgu **yok**).
-- [ ] Mevcut `valid`/`daysLeft`/`issuer`/`isSelfSigned`/`grade` alanları **korunmuş**.
-
-**7b — E-posta**
-- [ ] `npm test` → `spf.test.ts` geçiyor; 10-lookup sayımı ve include döngüsü test edilmiş.
-- [ ] Bilinen permerror'lu bir domain → `permerror: true`,
-      `permerrorReason: 'too-many-lookups'`; sonuç `mxtoolbox`/`dmarcian` ile doğrulanmış.
-- [ ] `+all` kullanan domain → skor 0 ve bulgu işaretli.
-- [ ] DNSSEC'li bir domain → `dnssec: true` (DoH `.AD`).
-- [ ] MTA-STS `enforce` olan bir domain doğru raporlanıyor.
-- [ ] Eski `EmailSecurityInfo` alanları korunmuş, yeni alanlar opsiyonel.
-
-**7c/7d — Cookie & CORS**
-- [ ] `Set-Cookie` yakalanıyor (GET'e geçildiği için).
-- [ ] `Secure`/`HttpOnly`/`SameSite` eksiklikleri `issues[]`'e yazılıyor.
-- [ ] CORS yansıtma testi doğru `severity` üretiyor.
-- [ ] Gövde indirilmiyor (başlıktan sonra `destroy`) — bellek artışı yok.
+- [ ] `npm test` → `takeover.test.ts` dört karar dalını da kapsıyor.
+- [ ] CNAME'i olmayan host → `reason: 'none'`, **hiç HTTP isteği yapılmıyor**.
+- [ ] Hedefi NXDOMAIN olan CNAME → `confidence: 'high'`, `reason: 'dangling-cname'`,
+      **hiç HTTP isteği yapılmadan**.
+- [ ] Bilinen bir servise işaret eden ama sahipli (çalışan) CNAME →
+      `vulnerable: false`, `reason: 'cname-match-no-fingerprint'`, `confidence: 'low'`.
+- [ ] **Yanlış pozitif testi:** iyi yönetilen 3 büyük domain taranıyor ve
+      **sıfır** `confidence: 'high'` bulgu çıkıyor. (Çıkarsa, aksi kanıtlanana kadar **bug** sayılır.)
+- [ ] `/api/scan` yanıtında CNAME'li kayıtlarda `takeover` alanı var, diğerlerinde yok.
+- [ ] `POST /api/takeover` 25 host sınırını aşınca `400` dönüyor.
+- [ ] Takeover kontrolü `/api/scan` süresini belirgin şekilde uzatmıyor (CNAME'li host sayısı az).
 
 ## 7. Doğrulama adımları
 
 ```bash
-cd server && npm test        # spf testleri
+cd server && npm test
 npm start &
 sleep 3
 
-# TLS derinliği
-curl -s "localhost:3001/api/advanced?subdomain=www.example.com" | python3 -m json.tool
+# Karar ağacı — canlı
+curl -s -X POST localhost:3001/api/takeover -H 'Content-Type: application/json' \
+  -d '{"hosts":["www.example.com"]}' | python3 -m json.tool
 
-# E-posta
-curl -s "localhost:3001/api/email-sec?domain=example.com" | python3 -c "
+# Tarama entegrasyonu
+curl -s "localhost:3001/api/scan?domain=example.com&validate=1" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-print('spf:', d.get('spf'))
-print('dmarc:', d.get('dmarc'))
-print('dnssec:', d.get('dnssec'))
-print('skor:', d.get('score'), d.get('grade'))
+t=[r for r in d['results'] if r.get('takeover')]
+print('takeover alanı olan kayıt:', len(t))
+for r in t[:5]:
+    print(' ', r['subdomain'], r['takeover']['confidence'], r['takeover']['reason'])
+hi=[r for r in t if r['takeover'].get('confidence')=='high' and r['takeover'].get('vulnerable')]
+print('YÜKSEK GÜVEN BULGU:', len(hi))
 "
-
-# SPF 10-lookup karşılaştırması (bilinen permerror'lu domain ile)
-#   Sonucu https://mxtoolbox.com/spf.aspx çıktısıyla karşılaştırın.
-
-# DNSSEC referans kontrolü
-curl -s -H 'Accept: application/dns-json' \
-  "https://cloudflare-dns.com/dns-query?name=example.com&type=A" | python3 -m json.tool | grep AD
 ```
 
-**Zincir döngüsü testi:** Kendinden imzalı sertifikası olan bir hostu sorgulayın; yanıt dönmeli,
-süreç asmamalı.
+**Pozitif kontrol (kontrolünüzdeki bir domain gerekir):**
+1. Sahip olduğunuz bir domainde, sahiplenilmemiş bir `*.github.io` adresine CNAME açın.
+2. `POST /api/takeover` → `confidence: 'high'` bekleyin.
+3. **Testten sonra CNAME kaydını silin.**
+
+**Negatif kontrol (yanlış pozitif avı):** İyi yönetilen 3 büyük domain tarayın.
+Yüksek güvenli herhangi bir bulgu çıkarsa elle doğrulayın; gerçek değilse karar ağacı hatalıdır.
 
 ## 8. Devir kontratı
 
 ```ts
-export interface SslInfo { /* mevcut alanlar + opsiyonel yeni alanlar, §5.1 */ }
-export interface CookieFinding { name; secure; httpOnly; sameSite; issues }
-export interface CorsFinding { acao; credentials; reflectsOrigin; severity; note? }
-export interface SpfResult { hasRecord; all; lookupCount; permerror; permerrorReason?; truncated; raw? }
+// server/lib/takeover.ts
+export interface TakeoverFinding {
+  vulnerable: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  service?: string;
+  cname?: string;
+  reason: 'dangling-cname' | 'fingerprint-match' | 'cname-match-no-fingerprint' | 'none';
+  note?: string;
+}
+export function checkTakeover(dns: DnsResult): Promise<TakeoverFinding>;
 ```
 
-`SubdomainDetail` şunlarla genişler: `cookies?: CookieFinding[]`, `cors?: CorsFinding`
-`EmailSecurityInfo` şunlarla genişler: `dnssec?`, `mtaSts?`, `tlsRpt?`, `caa?`, genişletilmiş `spf`/`dmarc`
+`SubdomainData` şu alanla genişler: `takeover?: TakeoverFinding`
 
-**Tüm yeni alanlar opsiyoneldir; eski önbellekler ve eski frontend sorunsuz çalışır.**
+**Endpoint:** `POST /api/takeover { hosts: string[] }` (max 25)
+
+> **Faz 8 için:** UI yalnız `vulnerable === true && confidence === 'high'` olanları kırmızı
+> banner sayımına katmalı; `low` güvenli bulgular amber rozet olarak gösterilmeli ve
+> banner sayısına **dahil edilmemelidir.**
 
 ## 9. Riskler ve geri alma
 
 | Risk | Belirti | Çözüm |
 |---|---|---|
-| Zincir yürüyüşü sonsuz döngü | İstek asılır, dyno CPU %100 | `cert === cert.issuerCertificate` kontrolü |
-| TLS 1.0 probu yanlış negatif | "TLS 1.0 desteklenmiyor" yanlış bilgisi | Başarısızlıkta `'unknown'` |
-| SPF özyinelemesi patladı | E-posta kontrolü çok yavaş | Derinlik 10 + toplam 30 sorgu tavanı + `visited` kümesi |
-| CAA her subdomain için sorgulandı | Gereksiz N sorgu | Yalnız apex, `/api/email-sec` içinde |
-| GET'e geçiş gövde indiriyor | Bellek/bant genişliği artışı | Başlıklardan sonra `destroy()` |
-| Not harfleri değişti | UI'daki `grade-*` sınıfları bozulur | A-F / A-E korunmalı |
+| **Yanlış pozitif** | Kullanıcı olmayan zafiyet için uğraşır, araca güveni biter | Güven kademelendirmesi + "kalıp tek başına yetmez" kuralı + negatif kontrol testi |
+| Parmak izi tablosu eskir | Yeni servisler kaçırılır | `can-i-take-over-xyz` periyodik gözden geçirilmeli; tablo tek dosyada |
+| HTTP kontrolü taramayı yavaşlattı | `/api/scan` uzuyor | Yalnız CNAME'li hostlar kontrol edilir; `httpPool` + 5 sn timeout |
+| Büyük gövde belleği doldurdu | RSS artışı | 32 KB tavanı, sonra `destroy()` |
+| Edge-case'ler `vulnerable` sayıldı | Yanlış pozitif dalgası | `status: 'edge-case'` olan parmak izleri **asla** `high` üretmemeli |
 
-**Geri alma:** Dört alt iş bağımsız olduğundan tek tek geri alınabilir; tüm yeni alanlar
-opsiyonel olduğu için frontend'de iz bırakmaz.
+**Geri alma:** `takeover` alanı opsiyonel olduğu için `git revert` güvenlidir; eski önbelleklerde
+alan yoksa UI zaten göstermez.

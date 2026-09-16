@@ -232,7 +232,7 @@ export interface SubdomainData {
 
 **Endpoint'ler:** `GET /api/scan?domain=&validate=1`, `POST /api/brute {domain, mode, seeds?}`
 
-> Faz 8 bu şekle göre yazılacaktır. `takeover?` alanı Faz 6'da bu tipe eklenir.
+> Faz 8 bu şekle göre yazılacaktır. `takeover?` alanı Faz 7'de bu tipe eklenir.
 
 ## 9. Riskler ve geri alma
 
