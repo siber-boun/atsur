@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { LIMITS, PORT_TARGETS } from '../config';
 import { checkHttp, checkPort, checkSqlBrowser } from '../lib/net';
-import { collectBrowserlessEvidence } from '../lib/browserless';
+import { collectBrowserlessEvidence, isBrowserlessConfigured } from '../lib/browserless';
 import { putEvidence } from '../lib/evidence';
 import { createPool } from '../lib/pool';
 import { isValidDomain } from '../lib/validate';
@@ -34,9 +34,25 @@ router.get('/api/analyze', async (req, res) => {
       let finalHost: string | undefined;
       // TCP taraması application-layer probe'dan önce çalışır. HTTP(S) yalnız
       // açık ve web-adayı portlarda denenir; SQL/RTSP gibi servislere GET atılmaz.
-      const isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
+      let isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
         ? checkSqlBrowser(ip)
         : checkPort(target.port, ip));
+      const tryBrowserless = async () => {
+        for (const protocol of target.webProtocols || []) {
+          const browserlessEvidence = await collectBrowserlessEvidence(protocol, domain, target.port);
+          if (browserlessEvidence?.ok) {
+            putEvidence(browserlessEvidence);
+            status = browserlessEvidence.status || 'Tarayıcı doğruladı';
+            isCloudflare = browserlessEvidence.waf?.name === 'Cloudflare' || /cloudflare/i.test(browserlessEvidence.server || '');
+            finalProtocol = browserlessEvidence.protocol;
+            verificationSource = 'browserless';
+            redirected = browserlessEvidence.redirects.length > 0;
+            finalHost = browserlessEvidence.externalRedirect?.target || browserlessEvidence.finalTarget;
+            return true;
+          }
+        }
+        return false;
+      };
       if (isOpen) {
         let webResponded = false;
         for (const protocol of target.webProtocols || []) {
@@ -56,20 +72,7 @@ router.get('/api/analyze', async (req, res) => {
         // Browserless yalnız Render gerçek bir HTTP yanıt üretemediğinde devreye
         // girer. Browserless yoksa veya başarısızsa açık TCP hizmeti korunur.
         if (!webResponded && target.webProtocols?.length) {
-          for (const protocol of target.webProtocols) {
-            const browserlessEvidence = await collectBrowserlessEvidence(protocol, domain, target.port);
-            if (browserlessEvidence?.ok) {
-              putEvidence(browserlessEvidence);
-              status = browserlessEvidence.status || 'Tarayıcı doğruladı';
-              isCloudflare = browserlessEvidence.waf?.name === 'Cloudflare' || /cloudflare/i.test(browserlessEvidence.server || '');
-              finalProtocol = browserlessEvidence.protocol;
-              verificationSource = 'browserless';
-              redirected = browserlessEvidence.redirects.length > 0;
-              finalHost = browserlessEvidence.externalRedirect?.target || browserlessEvidence.finalTarget;
-              webResponded = true;
-              break;
-            }
-          }
+          webResponded = await tryBrowserless();
         }
         activePorts.push({
           port: target.port,
@@ -84,6 +87,29 @@ router.get('/api/analyze', async (req, res) => {
           ...(redirected ? { redirected } : {}),
           ...(finalHost ? { finalHost } : {})
         });
+      } else if ((target.port === 80 || target.port === 443) && target.webProtocols?.length) {
+        // Render'ın egress ağında TCP SYN/CONNECT başarısız görünse bile bu iki
+        // birincil web portu Browserless üzerinden canlı olarak doğrulanabilir.
+        // Diğer tüm portlar TCP-first davranışını aynen korur.
+        const browserlessVerified = await tryBrowserless();
+        if (browserlessVerified) {
+          isOpen = true;
+          activePorts.push({
+            port: target.port,
+            status,
+            isCloudflare,
+            protocol: finalProtocol,
+            transport: target.transport,
+            service: target.service,
+            isWeb: true,
+            isWebCandidate: true,
+            verificationSource: 'browserless',
+            ...(redirected ? { redirected } : {}),
+            ...(finalHost ? { finalHost } : {})
+          });
+        } else if (!isBrowserlessConfigured()) {
+          probeErrors.push({ port: target.port, protocol: target.webProtocols[0], code: 'BROWSERLESS_UNCONFIGURED' });
+        }
       }
     });
     await Promise.all(portChecks);

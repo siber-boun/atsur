@@ -22,6 +22,11 @@ function functionEndpoint(): URL | undefined {
   } catch { return undefined; }
 }
 
+/** Yalnız var/yok bilgisi verir; URL veya token hiçbir zaman dışarı aktarılmaz. */
+export function isBrowserlessConfigured() {
+  return Boolean(functionEndpoint());
+}
+
 const sanitizedUrl = (url: URL) => `${url.protocol}//${url.host}${url.pathname}`;
 
 function allowedWebPort(url: URL) {
