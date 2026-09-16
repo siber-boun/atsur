@@ -57,6 +57,13 @@ interface PortInfo {
   service?: string;
   isWeb?: boolean;
   isWebCandidate?: boolean;
+  verificationSource?: 'server' | 'browser';
+}
+
+interface ProbeError {
+  port: number;
+  protocol: 'http:' | 'https:';
+  code: string;
 }
 
 interface TechInfo {
@@ -82,6 +89,7 @@ interface SubdomainDetail {
   waf?: any;
   cookies?: any[];
   cors?: any;
+  probeErrors?: ProbeError[];
   advancedAnalyzing?: boolean;
 }
 
@@ -275,6 +283,35 @@ async function fetchJsonWithTimeout<T>(
     const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) throw new Error(`API isteği başarısız (${response.status})`);
     return await response.json() as T;
+  } finally {
+    window.clearTimeout(timeoutId);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  }
+}
+
+async function verifyHttpsFromBrowser(host: string, parentSignal?: AbortSignal): Promise<boolean> {
+  // Yalnız keşfedilmiş DNS adlarına, cookiesiz ve gövdesi okunmadan GET yapılır.
+  // no-cors, hedef CORS başlığı göndermese bile bağlantı başarısını doğrulamamızı sağlar.
+  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(host)) return false;
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  if (parentSignal?.aborted) return false;
+  parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(`https://${host}/`, {
+      method: 'GET',
+      mode: 'no-cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'follow',
+      referrerPolicy: 'no-referrer',
+      signal: controller.signal
+    });
+    try { await response.body?.cancel(); } catch { /* opaque yanıtta body kullanılamayabilir */ }
+    return true;
+  } catch {
+    return false;
   } finally {
     window.clearTimeout(timeoutId);
     parentSignal?.removeEventListener('abort', abortFromParent);
@@ -508,14 +545,40 @@ function App() {
   const handleAnalyzeSubdomain = async (sub: string, signal?: AbortSignal): Promise<boolean> => {
     setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], analyzing: true } }));
 
-    const analysisResult = await Promise.allSettled([fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean }>(
+    const analysisResult = await Promise.allSettled([fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean; probeErrors?: ProbeError[] }>(
       `${API_BASE_URL}/api/analyze?domain=${sub}`,
       {},
-      25000,
+      // 45 port taraması, özellikle Render'ın soğuk başlangıcı veya yavaş hedeflerde
+      // 25 saniyeyi aşabilir. Bu istek için daha geniş bir bütçe verilir.
+      45000,
       signal
     )]).then(([result]) => result);
 
     const analysis = analysisResult.status === 'fulfilled' ? analysisResult.value : null;
+    let ports: PortInfo[] = (Array.isArray(analysis?.ports) ? analysis.ports : []).map(port => ({
+      ...port,
+      verificationSource: port.verificationSource || 'server' as const
+    }));
+    const serverVerifiedHttps = ports.some(port => port.isWeb === true && port.protocol === 'https:');
+    const browserHttpsVerified = !serverVerifiedHttps && !signal?.aborted
+      ? await verifyHttpsFromBrowser(sub, signal)
+      : false;
+
+    if (browserHttpsVerified) {
+      const browserPort: PortInfo = {
+        port: 443,
+        status: 'Tarayıcıdan doğrulandı',
+        protocol: 'https:',
+        transport: 'tcp',
+        service: 'HTTPS',
+        isWeb: true,
+        isWebCandidate: true,
+        verificationSource: 'browser'
+      };
+      const existing443 = ports.findIndex(port => port.port === 443);
+      if (existing443 >= 0) ports = ports.map((port, index) => index === existing443 ? { ...port, ...browserPort } : port);
+      else ports = [...ports, browserPort].sort((a, b) => a.port - b.port);
+    }
 
     setSubdomainDetails(prev => ({
       ...prev,
@@ -523,15 +586,18 @@ function App() {
         ...prev[sub],
         ...(analysis ? {
           ip: analysis.ip ?? null,
-          ports: Array.isArray(analysis.ports) ? analysis.ports : [],
-          isCloudflare: Boolean(analysis.isCloudflare)
+          ports,
+          isCloudflare: Boolean(analysis.isCloudflare),
+          probeErrors: Array.isArray(analysis.probeErrors) ? analysis.probeErrors : []
+        } : browserHttpsVerified ? {
+          ports
         } : {}),
         analyzing: false,
         techAnalyzing: false
       }
     }));
 
-    return analysisResult.status === 'fulfilled';
+    return analysisResult.status === 'fulfilled' || browserHttpsVerified;
   };
 
   const handleAnalyzeAll = async () => {
@@ -580,7 +646,9 @@ function App() {
       };
 
       try {
-        await Promise.all(Array.from({ length: Math.min(3, targets.length) }, () => worker()));
+        // Free Render üzerinde üç ağır port taraması aynı anda zaman aşımına yaklaşabiliyor.
+        // İki işçi, hedef başına daha kararlı sonuç verirken arayüzü bloklamaz.
+        await Promise.all(Array.from({ length: Math.min(2, targets.length) }, () => worker()));
         const cancelled = controller.signal.aborted;
         setServiceRuns(prev => ({
           ...prev,
@@ -1169,6 +1237,7 @@ function App() {
                                           {detail.ports.map((p, pIdx) => {
                                               let statusBadgeClass = 'status-badge-gray';
                                               if (p.status === 200 || p.status === 201) statusBadgeClass = 'status-badge-green';
+                                              else if (p.verificationSource === 'browser') statusBadgeClass = 'status-badge-green';
                                               else if (String(p.status).startsWith('3')) statusBadgeClass = 'status-badge-blue';
                                               else if (String(p.status).startsWith('4') || String(p.status).startsWith('5')) statusBadgeClass = 'status-badge-red';
                                               else if (String(p.status).includes('Açık') || String(p.status).includes('Yanıtı')) statusBadgeClass = 'status-badge-green';
@@ -1178,7 +1247,8 @@ function App() {
                                               const scheme = p.protocol === 'https:' ? 'https' : 'http';
                                               const portStr = (scheme === 'https' && p.port === 443) || (scheme === 'http' && p.port === 80) ? '' : `:${p.port}`;
                                               const targetUrl = isWebPort ? `${scheme}://${sub}${portStr}` : undefined;
-                                              const title = `${p.service || 'Servis'} · ${(p.transport || 'tcp').toUpperCase()} · ${p.status}`;
+                                              const verificationLabel = p.verificationSource === 'browser' ? ' · Kullanıcının tarayıcısından doğrulandı' : '';
+                                              const title = `${p.service || 'Servis'} · ${(p.transport || 'tcp').toUpperCase()} · ${p.status}${verificationLabel}`;
 
                                               const content = <>
                                                 <span className="port-number">:{p.port}/{p.transport || 'tcp'}</span>

@@ -59,8 +59,9 @@ export const checkHttp = (protocol: string, host: string, port: number, ip: stri
     });
     requestObj.on('error', reject);
     requestObj.on('timeout', () => {
-      requestObj.destroy();
-      reject(new Error('timeout'));
+      const error = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+      requestObj.destroy(error);
+      reject(error);
     });
     requestObj.end();
   }));

@@ -16,6 +16,12 @@ export interface PortResult {
   isWebCandidate: boolean;
 }
 
+export interface ProbeError {
+  port: number;
+  protocol: 'http:' | 'https:';
+  code: string;
+}
+
 export interface TechSignature {
   name: string;
   category: string;

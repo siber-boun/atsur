@@ -4,9 +4,14 @@ import { checkHttp, checkPort, checkSqlBrowser } from '../lib/net';
 import { createPool } from '../lib/pool';
 import { isValidDomain } from '../lib/validate';
 import { resolvePublic } from '../lib/ssrf';
-import type { PortResult } from '../types';
+import type { PortResult, ProbeError } from '../types';
 
 const router = Router();
+
+const errorCode = (error: unknown): string => {
+  if (error && typeof error === 'object' && 'code' in error) return String(error.code);
+  return error instanceof Error ? error.name : 'UNKNOWN';
+};
 
 router.get('/api/analyze', async (req, res) => {
   const domain = req.query.domain as string;
@@ -15,6 +20,7 @@ router.get('/api/analyze', async (req, res) => {
   const ip = resolved.ips[0] || null;
   if (resolved.blocked) return res.json({ ip: null, ports: [], isCloudflare: false, ...(resolved.reason === 'private-ip' ? { blocked: 'private-ip' } : {}) });
   const activePorts: PortResult[] = [];
+  const probeErrors: ProbeError[] = [];
   if (ip) {
     const portsPerHostPool = createPool(LIMITS.portsPerHost);
     const portChecks = PORT_TARGETS.map(async (target) => {
@@ -34,7 +40,8 @@ router.get('/api/analyze', async (req, res) => {
             finalProtocol = result.protocolUsed;
             webResponded = true;
             break;
-          } catch {
+          } catch (error) {
+            probeErrors.push({ port: target.port, protocol, code: errorCode(error) });
             // TCP kontrolü yine de ham hizmet görünürlüğünü kaydetmeye çalışır.
           }
         }
@@ -43,14 +50,17 @@ router.get('/api/analyze', async (req, res) => {
         ? checkSqlBrowser(ip)
         : checkPort(target.port, ip));
       if (isOpen) {
-        for (const protocol of webResponded ? [] : (target.webProtocols || [])) {
+        // Standart portlarda protokoller yukarıda zaten denendi; aynı zaman aşımını
+        // ikinci kez beklemek yerine yalnız alternatif web portlarını burada doğrula.
+        for (const protocol of webResponded || isPrimaryWebPort ? [] : (target.webProtocols || [])) {
           try {
             const result = await checkHttp(protocol, domain, target.port, ip);
             status = result.status;
             isCloudflare = result.isCloudflare;
             finalProtocol = result.protocolUsed;
             break;
-          } catch {
+          } catch (error) {
+            probeErrors.push({ port: target.port, protocol, code: errorCode(error) });
             // Açık TCP portu HTTP yanıtı vermese bile servis envanterinde tutulur.
           }
         }
@@ -69,7 +79,12 @@ router.get('/api/analyze', async (req, res) => {
     await Promise.all(portChecks);
   }
   activePorts.sort((a, b) => a.port - b.port);
-  res.json({ ip, ports: activePorts, isCloudflare: activePorts.some((port) => port.isCloudflare) });
+  res.json({
+    ip,
+    ports: activePorts,
+    isCloudflare: activePorts.some((port) => port.isCloudflare),
+    ...(probeErrors.length ? { probeErrors } : {})
+  });
 });
 
 export default router;
