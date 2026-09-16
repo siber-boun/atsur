@@ -8,6 +8,7 @@ import { detectTechnologies } from '../lib/technology';
 import { inspectCookies } from '../lib/cookies';
 import { CORS_PROBE_ORIGIN, inspectCors } from '../lib/cors';
 import { inspectTls } from '../lib/tls';
+import { getShodanPassiveAnalysis } from '../lib/shodan';
 
 const router = Router();
 
@@ -48,9 +49,18 @@ router.get('/api/advanced', async (req, res) => {
     requestObj.on('timeout', () => { requestObj.destroy(); resolve(null); });
     requestObj.end();
   }));
-  const sharedEdge = Boolean((headerWafInfo as any)?.waf?.detected && /cloudflare|fastly|akamai/i.test((headerWafInfo as any).waf.name || ''));
+  const passive = !sslInfo || !headerWafInfo ? await getShodanPassiveAnalysis(ip) : null;
+  const effectiveSsl = sslInfo || passive?.ssl || null;
+  const effectiveAdvanced = headerWafInfo || passive?.advanced || null;
+  const sharedEdge = Boolean((effectiveAdvanced as any)?.waf?.detected && /cloudflare|fastly|akamai/i.test((effectiveAdvanced as any).waf.name || ''));
   const technologies = await detectTechnologies(subdomain, { sharedEdge });
-  res.json({ ssl: sslInfo, advanced: headerWafInfo, technologies });
+  const usedFor = [!sslInfo && passive?.ssl ? 'ssl' : null, !headerWafInfo && passive?.advanced ? 'http-security' : null].filter(Boolean);
+  res.json({
+    ssl: effectiveSsl,
+    advanced: effectiveAdvanced,
+    technologies,
+    ...(usedFor.length ? { passiveFallback: { source: 'shodan', usedFor, observedAt: passive?.observedAt } } : {})
+  });
 });
 
 export default router;

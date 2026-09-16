@@ -1,10 +1,10 @@
 import http from 'node:http';
 import https from 'node:https';
 import type { Response } from 'node-fetch';
-import { SOURCE_KEYS } from '../config';
 import { TECH_SIGNATURES } from '../fingerprints/tech';
 import { getFetch } from './http';
 import { techPool } from './pool';
+import { getShodanHost } from './shodan';
 import { resolvePublic } from './ssrf';
 
 export interface TechnologyFinding {
@@ -24,7 +24,6 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const BODY_LIMIT_BYTES = 1024 * 1024;
 const technologyCache = new Map<string, { expiresAt: number; value: TechnologyFinding[] }>();
 const shodanCache = new Map<string, { expiresAt: number; value: TechnologyFinding[] }>();
-const shodanInFlight = new Map<string, Promise<TechnologyFinding[]>>();
 let detectorModule: Promise<DetectorModule> | undefined;
 
 const categoryLabels: Record<string, string> = {
@@ -184,38 +183,40 @@ async function staticDetections(hostname: string): Promise<TechnologyFinding[]> 
 }
 
 async function fetchShodanDetections(ip: string): Promise<TechnologyFinding[]> {
-  if (!SOURCE_KEYS.SHODAN_API_KEY) return [];
   const cached = cacheRead(shodanCache, ip);
   if (cached) return cached;
-  try {
-    const fetch = await getFetch();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      const response = await fetch(`https://api.shodan.io/shodan/host/${encodeURIComponent(ip)}?key=${encodeURIComponent(SOURCE_KEYS.SHODAN_API_KEY)}&minify=false`, { signal: controller.signal as any });
-      if (!response.ok) return [];
-      const data = await response.json() as { last_update?: string; data?: Array<{ product?: string; version?: string; port?: number; timestamp?: string; cpe23?: string[] }> };
-      const findings = (data.data || []).flatMap((service) => service.product ? [{
-        name: service.product, category: 'Sunucu', ...(service.version ? { version: service.version } : {}),
-        confidence: 70, sources: ['shodan'] as Array<'shodan'>,
+  const data = await getShodanHost(ip);
+  if (!data) return [];
+  const findings = new Map<string, TechnologyFinding>();
+  for (const service of data.data || []) {
+    const candidates: Array<{ name: string; version?: string }> = [];
+    if (service.product) candidates.push({ name: service.product, version: service.version });
+    if (service.http?.server) {
+      const match = /^([^/]+?)(?:\/([^\s]+))?$/.exec(service.http.server.trim());
+      if (match) candidates.push({ name: match[1], version: match[2] });
+    }
+    for (const [name, component] of Object.entries(service.http?.components || {})) {
+      candidates.push({ name, version: component.versions?.[0] });
+    }
+    for (const candidate of candidates) {
+      const finding: TechnologyFinding = {
+        name: candidate.name, category: 'Sunucu', ...(candidate.version ? { version: candidate.version } : {}),
+        confidence: 70, sources: ['shodan'],
         evidence: [`${service.port || '—'}/tcp · IP pasif gözlemi`],
         observedAt: service.timestamp || data.last_update, passive: true
-      }] : []);
-      return cacheWrite(shodanCache, ip, findings);
-    } finally { clearTimeout(timeout); }
-  } catch { return []; }
+      };
+      const key = `${finding.name.toLowerCase()}|${finding.version || ''}`;
+      if (!findings.has(key)) findings.set(key, finding);
+    }
+  }
+  return cacheWrite(shodanCache, ip, [...findings.values()]);
 }
 
 async function shodanDetections(ip: string, sharedEdge: boolean): Promise<TechnologyFinding[]> {
   const cached = cacheRead(shodanCache, ip);
   let findings: TechnologyFinding[];
   if (cached) findings = cached;
-  else {
-    const existing = shodanInFlight.get(ip);
-    const task = existing || fetchShodanDetections(ip).finally(() => shodanInFlight.delete(ip));
-    if (!existing) shodanInFlight.set(ip, task);
-    findings = await task;
-  }
+  else findings = await fetchShodanDetections(ip);
   return sharedEdge ? findings.map((item) => ({
     ...item, confidence: 35,
     evidence: item.evidence?.map((evidence) => evidence.replace('IP pasif gözlemi', 'Ortak/CDN altyapısı'))

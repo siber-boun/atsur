@@ -90,6 +90,7 @@ interface SubdomainDetail {
   cookies?: any[];
   cors?: any;
   probeErrors?: ProbeError[];
+  passiveFallback?: { source: 'shodan'; usedFor: string[]; observedAt?: string };
   advancedAnalyzing?: boolean;
 }
 
@@ -316,6 +317,18 @@ async function verifyHttpsFromBrowser(host: string, parentSignal?: AbortSignal):
     window.clearTimeout(timeoutId);
     parentSignal?.removeEventListener('abort', abortFromParent);
   }
+}
+
+function AnalysisWaitIndicator() {
+  return (
+    <span className="analysis-wait" role="status" aria-label="Render ve pasif kaynaklar kontrol ediliyor">
+      <span className="analysis-hourglass" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M6 2h12M6 22h12M7 2v4c0 2.6 2 4.1 5 6-3 1.9-5 3.4-5 6v4M17 2v4c0 2.6-2 4.1-5 6 3 1.9 5 3.4 5 6v4"/></svg>
+      </span>
+      <span>Render kontrol ediliyor</span>
+      <i className="analysis-wait-track" aria-hidden="true"><b></b></i>
+    </span>
+  );
 }
 
 // API Base URL - Local'de /api (Vite proxy üzerinden), Canlıda Render URL'si
@@ -731,6 +744,7 @@ function App() {
                     waf: data.advanced?.waf,
                     cookies: data.advanced?.cookies,
                     cors: data.advanced?.cors,
+                    passiveFallback: data.passiveFallback,
                     technologies: Array.isArray(data.technologies) ? data.technologies : [],
                     advancedAnalyzing: false
                   }
@@ -1414,33 +1428,36 @@ function App() {
                                                 
                                                 if (!detail || !hasSecurityDetail(detail)) return null;
                                                 const browserVerified = isBrowserVerified(detail);
+                                                const passiveSsl = detail.ssl?.passive === true || detail.ssl?.source === 'shodan';
+                                                const passiveSecurity = detail.security?.passive === true || detail.security?.source === 'shodan';
 
                                                 return (
                                                     <tr key={idx}>
                                                         <td className="col-subdomain">{sub}</td>
                                                         <td>
-                                                            {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
+                                                            {detail.advancedAnalyzing ? <AnalysisWaitIndicator /> :
                                                              detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-cert">
-                                                            {detail.ssl ? (
+                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.ssl ? (
                                                                 <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
-                                                                    {detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft}g)` : 'Geçersiz'}
+                                                                    {passiveSsl ? 'Shodan pasif · ' : ''}{detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft ?? '—'}g)` : 'Geçersiz'}
                                                                 </span>
                                                             ) : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
                                                         </td>
                                                         <td className="col-header-score">
-                                                            {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
+                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
                                                              detail.security ? (
                                                                <div className="header-score">
                                                                  <span><strong>{detail.security.score}</strong>/100</span>
                                                                  <i><b style={{ width: `${detail.security.score}%` }}></b></i>
                                                                  <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
+                                                                 {passiveSecurity && <small className="passive-source-label">Shodan pasif</small>}
                                                                </div>
                                                              ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-missing">
-                                                            {detail.security?.missing ? (
+                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.security?.missing ? (
                                                                 <div className="missing-list-inline">
                                                                     {detail.security.missing.map((m: string, mIdx: number) => (
                                                                         <span key={mIdx} className="missing-tag">{m}</span>
@@ -1449,12 +1466,13 @@ function App() {
                                                             ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td>
-                                                            {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> : 
+                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
                                                              detail.waf?.detected ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> :
+                                                             detail.waf && passiveSecurity ? <span className="text-muted">Shodan: tespit yok</span> :
                                                              detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-tech-stack">
-                                                            {detail.advancedAnalyzing ? <span className="analyzing-text-small">Taranıyor...</span> :
+                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
                                                               (detail.technologies || []).filter(tech => tech.category !== 'CDN').length > 0 ? (
                                                                 <div className="tech-stack-list">
                                                                   {(detail.technologies || []).filter(tech => tech.category !== 'CDN').slice(0, 6).map((tech, techIdx) => {
