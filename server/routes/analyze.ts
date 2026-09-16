@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { LIMITS, PORT_TARGETS } from '../config';
 import { checkHttp, checkPort, checkSqlBrowser } from '../lib/net';
-import { collectBrowserlessEvidence, isBrowserlessConfigured } from '../lib/browserless';
+import { collectBrowserlessEvidenceResult } from '../lib/browserless';
 import { putEvidence } from '../lib/evidence';
 import { createPool } from '../lib/pool';
 import { isValidDomain } from '../lib/validate';
@@ -37,9 +37,11 @@ router.get('/api/analyze', async (req, res) => {
       let isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
         ? checkSqlBrowser(ip)
         : checkPort(target.port, ip));
-      const tryBrowserless = async () => {
+      const tryBrowserless = async (): Promise<{ verified: boolean; code?: string }> => {
+        let code: string | undefined;
         for (const protocol of target.webProtocols || []) {
-          const browserlessEvidence = await collectBrowserlessEvidence(protocol, domain, target.port);
+          const browserlessResult = await collectBrowserlessEvidenceResult(protocol, domain, target.port);
+          const browserlessEvidence = browserlessResult.evidence;
           if (browserlessEvidence?.ok) {
             putEvidence(browserlessEvidence);
             status = browserlessEvidence.status || 'Tarayıcı doğruladı';
@@ -48,10 +50,11 @@ router.get('/api/analyze', async (req, res) => {
             verificationSource = 'browserless';
             redirected = browserlessEvidence.redirects.length > 0;
             finalHost = browserlessEvidence.externalRedirect?.target || browserlessEvidence.finalTarget;
-            return true;
+            return { verified: true };
           }
+          code = browserlessResult.code || code;
         }
-        return false;
+        return { verified: false, ...(code ? { code } : {}) };
       };
       if (isOpen) {
         let webResponded = false;
@@ -72,7 +75,9 @@ router.get('/api/analyze', async (req, res) => {
         // Browserless yalnız Render gerçek bir HTTP yanıt üretemediğinde devreye
         // girer. Browserless yoksa veya başarısızsa açık TCP hizmeti korunur.
         if (!webResponded && target.webProtocols?.length) {
-          webResponded = await tryBrowserless();
+          const browserless = await tryBrowserless();
+          webResponded = browserless.verified;
+          if (!webResponded && browserless.code) probeErrors.push({ port: target.port, protocol: target.webProtocols[0], code: browserless.code });
         }
         activePorts.push({
           port: target.port,
@@ -91,8 +96,8 @@ router.get('/api/analyze', async (req, res) => {
         // Render'ın egress ağında TCP SYN/CONNECT başarısız görünse bile bu iki
         // birincil web portu Browserless üzerinden canlı olarak doğrulanabilir.
         // Diğer tüm portlar TCP-first davranışını aynen korur.
-        const browserlessVerified = await tryBrowserless();
-        if (browserlessVerified) {
+        const browserless = await tryBrowserless();
+        if (browserless.verified) {
           isOpen = true;
           activePorts.push({
             port: target.port,
@@ -107,8 +112,8 @@ router.get('/api/analyze', async (req, res) => {
             ...(redirected ? { redirected } : {}),
             ...(finalHost ? { finalHost } : {})
           });
-        } else if (!isBrowserlessConfigured()) {
-          probeErrors.push({ port: target.port, protocol: target.webProtocols[0], code: 'BROWSERLESS_UNCONFIGURED' });
+        } else if (browserless.code) {
+          probeErrors.push({ port: target.port, protocol: target.webProtocols[0], code: browserless.code });
         }
       }
     });

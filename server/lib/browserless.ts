@@ -11,6 +11,11 @@ const RESPONSE_LIMIT = BODY_LIMIT + 64 * 1024;
 
 type BrowserlessPayload = { data?: { status?: number; finalUrl?: string; headers?: Record<string, string>; html?: string; truncated?: boolean; navigations?: Array<{ status?: number; url?: string; location?: string }> } };
 
+export interface BrowserlessEvidenceResult {
+  evidence: HttpEvidence | null;
+  code?: string;
+}
+
 function functionEndpoint(): URL | undefined {
   const value = process.env.BROWSERLESS_URL;
   if (!value || !process.env.BROWSERLESS_API_KEY) return undefined;
@@ -73,31 +78,32 @@ const browserlessFunction = `export default async ({ page, context }) => {
 };`;
 
 /** Browserless is a rendering fallback, never a user-controlled proxy. */
-export async function collectBrowserlessEvidence(protocol: 'http:' | 'https:', hostname: string, port: number): Promise<HttpEvidence | null> {
+export async function collectBrowserlessEvidenceResult(protocol: 'http:' | 'https:', hostname: string, port: number): Promise<BrowserlessEvidenceResult> {
   const endpoint = functionEndpoint();
   const origin = new URL(`${protocol}//${hostname}:${port}/`);
-  if (!endpoint || !(await validateTarget(origin))) return null;
+  if (!endpoint) return { evidence: null, code: 'BROWSERLESS_UNCONFIGURED' };
+  if (!(await validateTarget(origin))) return { evidence: null, code: 'BROWSERLESS_TARGET_BLOCKED' };
   try {
     const response = await request(endpoint, {
       method: 'POST', headersTimeout: 15_000, bodyTimeout: 20_000,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ code: browserlessFunction, context: { url: origin.toString(), bodyLimit: BODY_LIMIT } })
     });
-    if (response.statusCode < 200 || response.statusCode >= 300) { response.body.destroy(); return null; }
+    if (response.statusCode < 200 || response.statusCode >= 300) { response.body.destroy(); return { evidence: null, code: `BROWSERLESS_HTTP_${response.statusCode}` }; }
     const data = (await readJson(response.body))?.data;
-    if (!data?.finalUrl || !data.status) return null;
+    if (!data?.finalUrl || !data.status) return { evidence: null, code: 'BROWSERLESS_INVALID_RESPONSE' };
     const finalUrl = new URL(data.finalUrl);
-    if (!(await validateTarget(finalUrl))) return null;
+    if (!(await validateTarget(finalUrl))) return { evidence: null, code: 'BROWSERLESS_REDIRECT_BLOCKED' };
     const navigation = data.navigations || [];
-    if (navigation.length > 4) return null;
+    if (navigation.length > 4) return { evidence: null, code: 'BROWSERLESS_TOO_MANY_REDIRECTS' };
     const redirects: RedirectEvidence[] = [];
     for (const item of navigation.slice(0, -1)) {
       if (!item.url || !item.location || !item.status) continue;
       const target = new URL(item.location, item.url);
-      if (!(await validateTarget(target))) return null;
+      if (!(await validateTarget(target))) return { evidence: null, code: 'BROWSERLESS_REDIRECT_BLOCKED' };
       redirects.push({ status: item.status, target: sanitizedUrl(target), external: target.hostname.toLowerCase() !== hostname.toLowerCase() });
     }
-    if (redirects.length > 3) return null;
+    if (redirects.length > 3) return { evidence: null, code: 'BROWSERLESS_TOO_MANY_REDIRECTS' };
     const headers = Object.fromEntries(Object.entries(data.headers || {}).map(([key, value]) => [key.toLowerCase(), String(value).slice(0, 4096)])) as Record<string, string>;
     const html = String(data.html || '');
     const evidence: HttpEvidence = {
@@ -115,6 +121,10 @@ export async function collectBrowserlessEvidence(protocol: 'http:' | 'https:', h
       evidence.externalRedirect = { target: sanitizedUrl(finalUrl), status: data.status, security: evidence.security, waf: evidence.waf, cookies: evidence.cookies, technologies: evidence.technologies };
       delete evidence.security; delete evidence.waf; delete evidence.cookies; delete evidence.technologies;
     }
-    return putEvidence(evidence);
-  } catch { return null; }
+    return { evidence: putEvidence(evidence) };
+  } catch { return { evidence: null, code: 'BROWSERLESS_REQUEST_FAILED' }; }
+}
+
+export async function collectBrowserlessEvidence(protocol: 'http:' | 'https:', hostname: string, port: number): Promise<HttpEvidence | null> {
+  return (await collectBrowserlessEvidenceResult(protocol, hostname, port)).evidence;
 }
