@@ -13,7 +13,7 @@ export interface TechnologyFinding {
   category: string;
   version?: string;
   confidence: number;
-  sources: Array<'opentechalyzer' | 'builtin' | 'urlscan' | 'shodan'>;
+  sources: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'shodan'>;
   evidence?: string[];
   observedAt?: string;
   passive: boolean;
@@ -237,31 +237,4 @@ export async function detectTechnologies(hostname: string, options: { sharedEdge
     if (!byKey.has(key)) byKey.set(key, item);
   }
   return [...byKey.values()];
-}
-
-/** urlscan is passive enrichment only; it never replaces live HTTP evidence. */
-export async function enrichUrlscanTechnologies(hostname: string): Promise<TechnologyFinding[]> {
-  const key = process.env.URLSCAN_API_KEY;
-  if (!key) return [];
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  try {
-    const fetch = await getFetch();
-    const response = await fetch(`https://urlscan.io/api/v1/search/?q=domain:${encodeURIComponent(hostname)}&size=1`, {
-      headers: { 'API-Key': key, Accept: 'application/json' }, signal: controller.signal as any
-    });
-    if (!response.ok) return [];
-    const data = await response.json() as { results?: Array<{ page?: { server?: string }; lists?: { technologies?: string[] } }> };
-    const result = data.results?.[0];
-    const names = [...new Set([...(result?.lists?.technologies || []), ...(result?.page?.server ? [result.page.server] : [])])];
-    return names.slice(0, 12).map((name) => ({
-      name: String(name).slice(0, 128), category: 'Diğer', confidence: 45,
-      sources: ['urlscan'] as Array<'urlscan'>, evidence: ['urlscan.io pasif enrichment'],
-      passive: true
-    }));
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timeout);
-  }
 }

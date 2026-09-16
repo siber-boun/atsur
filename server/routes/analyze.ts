@@ -1,8 +1,6 @@
 import { Router } from 'express';
 import { LIMITS, PORT_TARGETS } from '../config';
 import { checkHttp, checkPort, checkSqlBrowser } from '../lib/net';
-import { collectUrlscanEvidence } from '../lib/urlscan-evidence';
-import { putEvidence } from '../lib/evidence';
 import { createPool } from '../lib/pool';
 import { isValidDomain } from '../lib/validate';
 import { resolvePublic } from '../lib/ssrf';
@@ -29,35 +27,13 @@ router.get('/api/analyze', async (req, res) => {
       let status: number | string = target.transport === 'udp' ? 'UDP Yanıtı' : 'TCP Açık';
       let isCloudflare = false;
       let finalProtocol = target.transport === 'udp' ? 'udp:' : 'tcp:';
-      let verificationSource: 'render' | 'urlscan' | undefined;
-      let redirected = false;
-      let finalHost: string | undefined;
+      let verificationSource: 'render' | undefined;
       // TCP taraması application-layer probe'dan önce çalışır. HTTP(S) yalnız
       // açık ve web-adayı portlarda denenir; SQL/RTSP gibi servislere GET atılmaz.
-      let isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
+      const isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
         ? checkSqlBrowser(ip)
         : checkPort(target.port, ip));
-      const tryUrlscan = async (): Promise<{ verified: boolean; code?: string }> => {
-        let code: string | undefined;
-        for (const protocol of target.webProtocols || []) {
-          const urlscanResult = await collectUrlscanEvidence(protocol, domain, target.port);
-          const urlscanEvidence = urlscanResult.evidence;
-          if (urlscanEvidence?.ok) {
-            putEvidence(urlscanEvidence);
-            status = urlscanEvidence.status || 'urlscan doğruladı';
-            isCloudflare = urlscanEvidence.waf?.name === 'Cloudflare' || /cloudflare/i.test(urlscanEvidence.server || '');
-            finalProtocol = urlscanEvidence.protocol;
-            verificationSource = 'urlscan';
-            redirected = urlscanEvidence.redirects.length > 0;
-            finalHost = urlscanEvidence.externalRedirect?.target || urlscanEvidence.finalTarget;
-            return { verified: true };
-          }
-          code = urlscanResult.code || code;
-        }
-        return { verified: false, ...(code ? { code } : {}) };
-      };
       if (isOpen) {
-        let webResponded = false;
         for (const protocol of target.webProtocols || []) {
           try {
             const result = await checkHttp(protocol, domain, target.port, ip);
@@ -65,21 +41,11 @@ router.get('/api/analyze', async (req, res) => {
             isCloudflare = result.isCloudflare;
             finalProtocol = result.protocolUsed;
             verificationSource = 'render';
-            webResponded = true;
             break;
           } catch (error) {
             probeErrors.push({ port: target.port, protocol, code: errorCode(error) });
             // Açık TCP portu HTTP yanıtı vermese bile servis envanterinde tutulur.
           }
-        }
-        // urlscan yalnız birincil HTTPS portunda Render gerçek bir HTTP yanıt
-        // üretemediğinde devreye girer. Alternatif panel portlarına otomatik
-        // harici scan gönderilmez; tek analiz kotayı tüketen bir scan fırtınası
-        // yaratmamalıdır.
-        if (!webResponded && target.port === 443 && target.webProtocols?.length) {
-          const urlscan = await tryUrlscan();
-          webResponded = urlscan.verified;
-          if (!webResponded && urlscan.code) probeErrors.push({ port: target.port, protocol: target.webProtocols[0], code: urlscan.code });
         }
         activePorts.push({
           port: target.port,
@@ -90,33 +56,8 @@ router.get('/api/analyze', async (req, res) => {
           service: target.service,
           isWeb: finalProtocol === 'http:' || finalProtocol === 'https:',
           isWebCandidate: Boolean(target.webProtocols?.length),
-          ...(verificationSource ? { verificationSource } : {}),
-          ...(redirected ? { redirected } : {}),
-          ...(finalHost ? { finalHost } : {})
+          ...(verificationSource ? { verificationSource } : {})
         });
-      } else if (target.port === 443 && target.webProtocols?.length) {
-        // Render'ın egress ağında TCP SYN/CONNECT başarısız görünse bile birincil
-        // HTTPS portu urlscan üzerinden canlı olarak doğrulanabilir.
-        // Diğer tüm portlar TCP-first davranışını aynen korur.
-        const urlscan = await tryUrlscan();
-        if (urlscan.verified) {
-          isOpen = true;
-          activePorts.push({
-            port: target.port,
-            status,
-            isCloudflare,
-            protocol: finalProtocol,
-            transport: target.transport,
-            service: target.service,
-            isWeb: true,
-            isWebCandidate: true,
-            verificationSource: 'urlscan',
-            ...(redirected ? { redirected } : {}),
-            ...(finalHost ? { finalHost } : {})
-          });
-        } else if (urlscan.code) {
-          probeErrors.push({ port: target.port, protocol: target.webProtocols[0], code: urlscan.code });
-        }
       }
     });
     await Promise.all(portChecks);

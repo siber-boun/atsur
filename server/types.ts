@@ -14,7 +14,7 @@ export interface PortResult {
   isWeb: boolean;
   /** HTTP doğrulanmasa bile hedef listesinde web/panel hizmeti olarak tanımlanmış açık port. */
   isWebCandidate: boolean;
-  verificationSource?: 'render' | 'urlscan';
+  verificationSource?: 'render' | 'browserless';
   redirected?: boolean;
   finalHost?: string;
 }
