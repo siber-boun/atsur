@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { LIMITS, PORT_TARGETS } from '../config';
 import { checkHttp, checkPort, checkSqlBrowser } from '../lib/net';
+import { collectBrowserlessEvidence } from '../lib/browserless';
+import { putEvidence } from '../lib/evidence';
 import { createPool } from '../lib/pool';
 import { isValidDomain } from '../lib/validate';
 import { resolvePublic } from '../lib/ssrf';
@@ -27,41 +29,46 @@ router.get('/api/analyze', async (req, res) => {
       let status: number | string = target.transport === 'udp' ? 'UDP Yanıtı' : 'TCP Açık';
       let isCloudflare = false;
       let finalProtocol = target.transport === 'udp' ? 'udp:' : 'tcp:';
-      // Standart HTTP/S portlarında doğrudan GET denemek, kısa TCP ön kontrolünün
-      // kaçırabildiği veya HEAD'i farklı ele alan uygulamaları doğru sınıflandırır.
-      const isPrimaryWebPort = target.port === 80 || target.port === 443;
-      let webResponded = false;
-      if (isPrimaryWebPort && target.webProtocols) {
-        for (const protocol of target.webProtocols) {
+      let verificationSource: 'render' | 'browserless' | undefined;
+      let redirected = false;
+      let finalHost: string | undefined;
+      // TCP taraması application-layer probe'dan önce çalışır. HTTP(S) yalnız
+      // açık ve web-adayı portlarda denenir; SQL/RTSP gibi servislere GET atılmaz.
+      const isOpen = await portsPerHostPool.run(() => target.transport === 'udp'
+        ? checkSqlBrowser(ip)
+        : checkPort(target.port, ip));
+      if (isOpen) {
+        let webResponded = false;
+        for (const protocol of target.webProtocols || []) {
           try {
             const result = await checkHttp(protocol, domain, target.port, ip);
             status = result.status;
             isCloudflare = result.isCloudflare;
             finalProtocol = result.protocolUsed;
+            verificationSource = 'render';
             webResponded = true;
             break;
           } catch (error) {
             probeErrors.push({ port: target.port, protocol, code: errorCode(error) });
-            // TCP kontrolü yine de ham hizmet görünürlüğünü kaydetmeye çalışır.
+            // Açık TCP portu HTTP yanıtı vermese bile servis envanterinde tutulur.
           }
         }
-      }
-      const isOpen = webResponded || await portsPerHostPool.run(() => target.transport === 'udp'
-        ? checkSqlBrowser(ip)
-        : checkPort(target.port, ip));
-      if (isOpen) {
-        // Standart portlarda protokoller yukarıda zaten denendi; aynı zaman aşımını
-        // ikinci kez beklemek yerine yalnız alternatif web portlarını burada doğrula.
-        for (const protocol of webResponded || isPrimaryWebPort ? [] : (target.webProtocols || [])) {
-          try {
-            const result = await checkHttp(protocol, domain, target.port, ip);
-            status = result.status;
-            isCloudflare = result.isCloudflare;
-            finalProtocol = result.protocolUsed;
-            break;
-          } catch (error) {
-            probeErrors.push({ port: target.port, protocol, code: errorCode(error) });
-            // Açık TCP portu HTTP yanıtı vermese bile servis envanterinde tutulur.
+        // Browserless yalnız Render gerçek bir HTTP yanıt üretemediğinde devreye
+        // girer. Browserless yoksa veya başarısızsa açık TCP hizmeti korunur.
+        if (!webResponded && target.webProtocols?.length) {
+          for (const protocol of target.webProtocols) {
+            const browserlessEvidence = await collectBrowserlessEvidence(protocol, domain, target.port);
+            if (browserlessEvidence?.ok) {
+              putEvidence(browserlessEvidence);
+              status = browserlessEvidence.status || 'Tarayıcı doğruladı';
+              isCloudflare = browserlessEvidence.waf?.name === 'Cloudflare' || /cloudflare/i.test(browserlessEvidence.server || '');
+              finalProtocol = browserlessEvidence.protocol;
+              verificationSource = 'browserless';
+              redirected = browserlessEvidence.redirects.length > 0;
+              finalHost = browserlessEvidence.externalRedirect?.target || browserlessEvidence.finalTarget;
+              webResponded = true;
+              break;
+            }
           }
         }
         activePorts.push({
@@ -72,7 +79,10 @@ router.get('/api/analyze', async (req, res) => {
           transport: target.transport,
           service: target.service,
           isWeb: finalProtocol === 'http:' || finalProtocol === 'https:',
-          isWebCandidate: Boolean(target.webProtocols?.length)
+          isWebCandidate: Boolean(target.webProtocols?.length),
+          ...(verificationSource ? { verificationSource } : {}),
+          ...(redirected ? { redirected } : {}),
+          ...(finalHost ? { finalHost } : {})
         });
       }
     });

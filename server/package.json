@@ -16,7 +16,8 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "node-fetch": "^2.7.0",
-    "opentechalyzer": "0.4.2"
+    "opentechalyzer": "0.4.2",
+    "undici": "^7.29.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

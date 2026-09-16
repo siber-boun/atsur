@@ -57,7 +57,9 @@ interface PortInfo {
   service?: string;
   isWeb?: boolean;
   isWebCandidate?: boolean;
-  verificationSource?: 'server' | 'browser';
+  verificationSource?: 'server' | 'render' | 'browserless' | 'browser';
+  redirected?: boolean;
+  finalHost?: string;
 }
 
 interface ProbeError {
@@ -71,7 +73,7 @@ interface TechInfo {
   category: string;
   version?: string;
   confidence?: number;
-  sources?: Array<'opentechalyzer' | 'builtin' | 'shodan'>;
+  sources?: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'urlscan' | 'shodan'>;
   evidence?: string[];
   observedAt?: string;
   passive?: boolean;
@@ -90,7 +92,8 @@ interface SubdomainDetail {
   cookies?: any[];
   cors?: any;
   probeErrors?: ProbeError[];
-  passiveFallback?: { source: 'shodan'; usedFor: string[]; observedAt?: string };
+  evidence?: { source: 'render-live' | 'browserless-live'; redirected?: boolean; finalTarget?: string; externalRedirect?: { target: string; status?: number } };
+  tlsVerification?: { verified: boolean; source: 'render-live' | 'browserless-live' };
   advancedAnalyzing?: boolean;
 }
 
@@ -743,8 +746,8 @@ function App() {
                     security: data.advanced?.security,
                     waf: data.advanced?.waf,
                     cookies: data.advanced?.cookies,
-                    cors: data.advanced?.cors,
-                    passiveFallback: data.passiveFallback,
+                    evidence: data.evidence,
+                    tlsVerification: data.tlsVerification,
                     technologies: Array.isArray(data.technologies) ? data.technologies : [],
                     advancedAnalyzing: false
                   }
@@ -883,12 +886,12 @@ function App() {
   const averageHeaderScore = headerScores.length
     ? Math.round(headerScores.reduce((sum, score) => sum + score, 0) / headerScores.length)
     : null;
-  const advancedAnalyzedCount = selectedDetails.filter(detail => detail.ssl || detail.security || detail.waf).length;
+  const advancedAnalyzedCount = selectedDetails.filter(detail => detail.ssl || detail.security || detail.waf || detail.evidence).length;
   const isBrowserVerified = (detail: SubdomainDetail | undefined) => Boolean(detail?.ports?.some(
     port => port.verificationSource === 'browser' && port.protocol === 'https:' && port.isWeb === true
   ));
   const hasSecurityDetail = (detail: SubdomainDetail | undefined) => Boolean(detail && (
-    detail.ssl || detail.security || detail.waf || detail.technologies || detail.advancedAnalyzing || isBrowserVerified(detail)
+    detail.ssl || detail.security || detail.waf || detail.technologies || detail.evidence || detail.advancedAnalyzing || isBrowserVerified(detail)
   ));
   const securityDetailCount = selectedDetails.filter(detail => hasSecurityDetail(detail)).length;
   const validSslCount = selectedDetails.filter(detail => detail.ssl?.valid).length;
@@ -1265,7 +1268,9 @@ function App() {
                                               const scheme = p.protocol === 'https:' ? 'https' : 'http';
                                               const portStr = (scheme === 'https' && p.port === 443) || (scheme === 'http' && p.port === 80) ? '' : `:${p.port}`;
                                               const targetUrl = isWebPort ? `${scheme}://${sub}${portStr}` : undefined;
-                                              const verificationLabel = p.verificationSource === 'browser' ? ' · Kullanıcının tarayıcısından doğrulandı' : '';
+                                              const verificationLabel = p.verificationSource === 'browser' ? ' · Kullanıcının tarayıcısından doğrulandı' :
+                                                p.verificationSource === 'browserless' ? ' · Browserless canlı render ile doğrulandı' :
+                                                  p.verificationSource === 'render' ? ' · Render canlı GET ile doğrulandı' : '';
                                               const title = `${p.service || 'Servis'} · ${(p.transport || 'tcp').toUpperCase()} · ${p.status}${verificationLabel}`;
 
                                               const content = <>
@@ -1428,22 +1433,24 @@ function App() {
                                                 
                                                 if (!detail || !hasSecurityDetail(detail)) return null;
                                                 const browserVerified = isBrowserVerified(detail);
-                                                const passiveSsl = detail.ssl?.passive === true || detail.ssl?.source === 'shodan';
-                                                const passiveSecurity = detail.security?.passive === true || detail.security?.source === 'shodan';
+                                                const browserlessVerified = detail.evidence?.source === 'browserless-live' || detail.tlsVerification?.source === 'browserless-live';
 
                                                 return (
                                                     <tr key={idx}>
-                                                        <td className="col-subdomain">{sub}</td>
+                                                        <td className="col-subdomain">
+                                                          {sub}
+                                                          {detail.evidence?.externalRedirect?.target && <small className="passive-source-label" title="Son hedefin bulguları ilk hedefin puanına dahil edilmez">↳ Dış yönlendirme: {detail.evidence.externalRedirect.target}</small>}
+                                                        </td>
                                                         <td>
                                                             {detail.advancedAnalyzing ? <AnalysisWaitIndicator /> :
-                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserlessVerified ? 'TLS doğrulandı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-cert">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.ssl ? (
                                                                 <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
-                                                                    {passiveSsl ? 'Shodan pasif · ' : ''}{detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft ?? '—'}g)` : 'Geçersiz'}
+                                                                    {detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft ?? '—'}g)` : 'Geçersiz'}
                                                                 </span>
-                                                            ) : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
+                                                            ) : browserlessVerified ? <span className="text-success">Browserless üzerinden TLS doğrulandı</span> : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
                                                         </td>
                                                         <td className="col-header-score">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
@@ -1452,9 +1459,9 @@ function App() {
                                                                  <span><strong>{detail.security.score}</strong>/100</span>
                                                                  <i><b style={{ width: `${detail.security.score}%` }}></b></i>
                                                                  <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
-                                                                 {passiveSecurity && <small className="passive-source-label">Shodan pasif</small>}
+                                                                 {browserlessVerified && <small className="passive-source-label">Browserless canlı render</small>}
                                                                </div>
-                                                             ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                             ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-missing">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.security?.missing ? (
@@ -1463,13 +1470,12 @@ function App() {
                                                                         <span key={mIdx} className="missing-tag">{m}</span>
                                                                     ))}
                                                                 </div>
-                                                            ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                            ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td>
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
                                                              detail.waf?.detected ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> :
-                                                             detail.waf && passiveSecurity ? <span className="text-muted">Shodan: tespit yok</span> :
-                                                             detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                             detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
                                                         </td>
                                                         <td className="col-tech-stack">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
@@ -1481,7 +1487,7 @@ function App() {
                                                                     return <span key={techIdx} className={`tech-badge ${tech.passive ? 'tech-passive' : 'tech-gray'}`} title={`${tech.category} · ${source}`}>{label}</span>;
                                                                   })}
                                                                 </div>
-                                                              ) : <span className="text-muted">{browserVerified ? 'Render erişemedi' : 'Tespit yok'}</span>}
+                                                              ) : <span className="text-muted">{browserlessVerified ? 'Tespit yok' : browserVerified ? 'Render erişemedi' : 'Tespit yok'}</span>}
                                                         </td>
                                                     </tr>
                                                 );

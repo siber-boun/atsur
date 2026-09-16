@@ -1,5 +1,4 @@
 export interface CookieFinding {
-  name: string;
   secure: boolean;
   httpOnly: boolean;
   sameSite: 'Strict' | 'Lax' | 'None' | null;
@@ -23,6 +22,8 @@ export function inspectCookies(values: string[] | undefined, isHttps = true): Co
     if (isHttps && !secure) issues.push('HTTPS üzerinde Secure bayrağı yok');
     if (/(sess|sid|token|auth|jwt)/i.test(name) && !httpOnly) issues.push('Oturum benzeri cookie’de HttpOnly bayrağı yok');
     if (sameSite === 'None' && !secure) issues.push('SameSite=None için Secure bayrağı zorunludur');
-    return { name, secure, httpOnly, sameSite, issues };
+    // Cookie adı yalnız risk sınıflaması için bellekte kullanılır; API sözleşmesi
+    // cookie adı/değeri taşımadığı için geri döndürülmez.
+    return { secure, httpOnly, sameSite, issues };
   });
 }

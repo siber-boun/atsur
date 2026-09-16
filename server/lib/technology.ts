@@ -6,13 +6,14 @@ import { getFetch } from './http';
 import { techPool } from './pool';
 import { getShodanHost } from './shodan';
 import { resolvePublic } from './ssrf';
+import type { TechnologyFinding as EvidenceTechnologyFinding } from './evidence';
 
 export interface TechnologyFinding {
   name: string;
   category: string;
   version?: string;
   confidence: number;
-  sources: Array<'opentechalyzer' | 'builtin' | 'shodan'>;
+  sources: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'urlscan' | 'shodan'>;
   evidence?: string[];
   observedAt?: string;
   passive: boolean;
@@ -223,8 +224,11 @@ async function shodanDetections(ip: string, sharedEdge: boolean): Promise<Techno
   })) : findings;
 }
 
-export async function detectTechnologies(hostname: string, options: { sharedEdge?: boolean } = {}): Promise<TechnologyFinding[]> {
-  const live = await staticDetections(hostname);
+export async function detectTechnologies(hostname: string, options: { sharedEdge?: boolean; live?: EvidenceTechnologyFinding[]; skipLiveFetch?: boolean } = {}): Promise<TechnologyFinding[]> {
+  const live: TechnologyFinding[] = options.live ? options.live.map((item): TechnologyFinding => ({
+    name: item.name, category: item.category, ...(item.version ? { version: item.version } : {}), confidence: item.confidence,
+    sources: item.sources, passive: false
+  })) : options.skipLiveFetch ? [] : await staticDetections(hostname);
   const resolved = await resolvePublic(hostname);
   const passive = !resolved.blocked && resolved.ips[0] ? await shodanDetections(resolved.ips[0], Boolean(options.sharedEdge)) : [];
   const byKey = new Map<string, TechnologyFinding>();
@@ -233,4 +237,31 @@ export async function detectTechnologies(hostname: string, options: { sharedEdge
     if (!byKey.has(key)) byKey.set(key, item);
   }
   return [...byKey.values()];
+}
+
+/** urlscan is passive enrichment only; it never replaces live HTTP evidence. */
+export async function enrichUrlscanTechnologies(hostname: string): Promise<TechnologyFinding[]> {
+  const key = process.env.URLSCAN_API_KEY;
+  if (!key) return [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const fetch = await getFetch();
+    const response = await fetch(`https://urlscan.io/api/v1/search/?q=domain:${encodeURIComponent(hostname)}&size=1`, {
+      headers: { 'API-Key': key, Accept: 'application/json' }, signal: controller.signal as any
+    });
+    if (!response.ok) return [];
+    const data = await response.json() as { results?: Array<{ page?: { server?: string }; lists?: { technologies?: string[] } }> };
+    const result = data.results?.[0];
+    const names = [...new Set([...(result?.lists?.technologies || []), ...(result?.page?.server ? [result.page.server] : [])])];
+    return names.slice(0, 12).map((name) => ({
+      name: String(name).slice(0, 128), category: 'Diğer', confidence: 45,
+      sources: ['urlscan'] as Array<'urlscan'>, evidence: ['urlscan.io pasif enrichment'],
+      passive: true
+    }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
 }
