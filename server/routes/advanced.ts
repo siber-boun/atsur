@@ -4,7 +4,7 @@ import { isValidDomain } from '../lib/validate';
 import { detectTechnologies, enrichUrlscanTechnologies } from '../lib/technology';
 import { inspectTls } from '../lib/tls';
 import { collectRenderEvidence, getCachedEvidence, putEvidence } from '../lib/evidence';
-import { collectBrowserlessEvidence } from '../lib/browserless';
+import { collectUrlscanEvidence } from '../lib/urlscan-evidence';
 
 const router = Router();
 
@@ -20,8 +20,8 @@ router.get('/api/advanced', async (req, res) => {
     const renderEvidence = await collectRenderEvidence('https:', subdomain, 443, ip);
     evidence = renderEvidence.ok ? renderEvidence : undefined;
     if (!evidence) {
-      const browserlessEvidence = await collectBrowserlessEvidence('https:', subdomain, 443);
-      if (browserlessEvidence?.ok) evidence = putEvidence(browserlessEvidence);
+      const urlscanEvidence = await collectUrlscanEvidence('https:', subdomain, 443);
+      if (urlscanEvidence.evidence?.ok) evidence = putEvidence(urlscanEvidence.evidence);
     }
   }
   const sharedEdge = Boolean(evidence?.waf?.detected && /cloudflare|fastly|akamai/i.test(evidence.waf.name || ''));

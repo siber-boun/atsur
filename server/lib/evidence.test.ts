@@ -21,9 +21,9 @@ test('canlı kanıt güvenlik header puanını hesaplar', () => {
 });
 
 test('hafif teknoloji tespiti WordPress ve IIS kanıtını tanır', () => {
-  const result = lightweightTechnologies({ server: 'Microsoft-IIS/10.0' }, '<link href="/wp-content/theme.css">', 'browserless-live');
+  const result = lightweightTechnologies({ server: 'Microsoft-IIS/10.0' }, '<link href="/wp-content/theme.css">', 'urlscan');
   assert.deepEqual(result.map((item) => item.name).sort(), ['IIS', 'WordPress']);
-  assert.ok(result.every((item) => item.sources[0] === 'browserless-live' && item.passive === false));
+  assert.ok(result.every((item) => item.sources[0] === 'urlscan' && item.passive === false));
 });
 
 test('sunucu sürümünü ve Spring/Java header kanıtını korur', () => {

@@ -13,7 +13,7 @@ export interface TechnologyFinding {
   category: string;
   version?: string;
   confidence: number;
-  sources: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'urlscan' | 'shodan'>;
+  sources: Array<'opentechalyzer' | 'builtin' | 'urlscan' | 'shodan'>;
   evidence?: string[];
   observedAt?: string;
   passive: boolean;

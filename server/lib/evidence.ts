@@ -8,7 +8,7 @@ import { resolvePublic } from './ssrf';
 import { isValidDomain } from './validate';
 import { PORT_TARGETS } from '../config';
 
-export type EvidenceSource = 'render-live' | 'browserless-live';
+export type EvidenceSource = 'render-live' | 'urlscan';
 
 export interface RedirectEvidence {
   status: number;
@@ -27,7 +27,7 @@ export interface TechnologyFinding {
   category: string;
   version?: string;
   confidence: number;
-  sources: Array<'builtin' | 'browserless-live'>;
+  sources: Array<'builtin' | 'urlscan'>;
   passive: false;
 }
 
@@ -109,13 +109,13 @@ export function securityFromHeaders(headers: Record<string, string | string[] | 
   return { score, grade, missing };
 }
 
-export function lightweightTechnologies(headers: Record<string, string | string[] | undefined>, html: string, source: 'builtin' | 'browserless-live' = 'builtin'): TechnologyFinding[] {
+export function lightweightTechnologies(headers: Record<string, string | string[] | undefined>, html: string, source: 'builtin' | 'urlscan' = 'builtin'): TechnologyFinding[] {
   const normalized: Record<string, string> = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), Array.isArray(value) ? value.join('; ') : value || '']));
   const findings: TechnologyFinding[] = TECH_SIGNATURES.filter((tech) => Object.entries(tech.headers).some(([key, pattern]) => pattern.test(normalized[key] || '')) || Boolean(tech.html?.test(html)))
     .map((tech) => {
       const server = normalized.server || '';
       const version = tech.category === 'Sunucu' ? /\/([0-9][\w.-]*)/.exec(server)?.[1] : undefined;
-      return { name: tech.name, category: tech.category, ...(version ? { version } : {}), confidence: source === 'browserless-live' ? 65 : 70, sources: [source], passive: false as const };
+      return { name: tech.name, category: tech.category, ...(version ? { version } : {}), confidence: source === 'urlscan' ? 65 : 70, sources: [source], passive: false as const };
     });
   return [...new Map(findings.map((item) => [`${item.name}|${item.version || ''}`, item])).values()];
 }

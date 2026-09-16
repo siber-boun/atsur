@@ -274,12 +274,12 @@ export class LocalStorageStore implements UserStore { /* osint_users */ }
 Supabase geçişinde yalnızca `SupabaseStore implements UserStore` yazılır ve `App.tsx`'teki tek
 örnekleme satırı değiştirilir. **UI kodu değişmez.** Parola saklama sorunu da o adımda çözülür.
 
-### Browserless erişim ayarı
+### urlscan erişim ayarı
 
-Faz 6 revizyonunda Cloudflare Worker kaldırılmıştır. Render ortamında
-`BROWSERLESS_URL` ve `BROWSERLESS_API_KEY` yalnız backend tarafından kullanılır;
-istemciye, loglara veya API yanıtına aktarılmaz. Mevcut port grubu, URL
-doğrulama ve temizlenmiş yanıt sözleşmesi korunur.
+Faz 6 revizyonunda Cloudflare Worker ve Browserless kaldırılmıştır. Render
+ortamındaki `URLSCAN_API_KEY` yalnız backend tarafından kullanılır; istemciye,
+loglara veya API yanıtına aktarılmaz. Mevcut port grubu, URL doğrulama ve
+temizlenmiş yanıt sözleşmesi korunur.
 
 ## 9. Riskler ve geri alma
 
