@@ -21,6 +21,7 @@ export const TECH_SIGNATURES: TechSignature[] = [
   { name: 'Apache', category: 'Sunucu', headers: { server: /apache/i }, html: null },
   { name: 'IIS', category: 'Sunucu', headers: { server: /iis/i }, html: null },
   { name: 'LiteSpeed', category: 'Sunucu', headers: { server: /litespeed/i }, html: null },
+  { name: 'CommuniGate Pro', category: 'Mail Sunucusu', headers: { server: /communigatepro(?:\/\d[\w.-]*)?/i }, html: /CommuniGate\s*Pro/i },
   { name: 'Cloudflare', category: 'CDN', headers: { server: /cloudflare/i }, html: null },
   { name: 'AWS CloudFront', category: 'CDN', headers: { via: /cloudfront/i }, html: null },
   { name: 'Fastly', category: 'CDN', headers: { 'x-served-by': /cache/i }, html: null },

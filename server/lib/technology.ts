@@ -170,7 +170,12 @@ async function staticDetections(hostname: string): Promise<TechnologyFinding[]> 
             evidence: item.evidence.slice(0, 2).map((e) => `${e.subject}: ${e.match}`),
             passive: false
           }));
-        return cacheWrite(technologyCache, hostname, detections);
+        const merged = new Map<string, TechnologyFinding>();
+        for (const finding of [...detections, ...localFallback(headers, html)]) {
+          const key = `${finding.name.toLowerCase()}|${finding.version || ''}`;
+          if (!merged.has(key)) merged.set(key, finding);
+        }
+        return cacheWrite(technologyCache, hostname, [...merged.values()]);
       } catch {
         return cacheWrite(technologyCache, hostname, localFallback(headers, html));
       }

@@ -754,7 +754,6 @@ function App() {
   const getScopeOutput = (domain: string): string => {
       if (!subdomains[domain]) return '';
       
-      const excludedPrefixes = ['mail.', 'webmail.', 'smtp.', 'pop.', 'pop3.', 'imap.', 'ns.', 'ns1.', 'ns2.', 'dns.', 'mx.'];
       const validSubdomains: string[] = [];
 
       const subs = subdomains[domain];
@@ -764,11 +763,9 @@ function App() {
           const sub = isLegacyString ? (item as string) : item.subdomain;
           const detail = subdomainDetails[sub];
 
-          // 1. Dışlanan (Mail/DNS) kelimelerle başlıyorsa atla
-          const isExcluded = excludedPrefixes.some(prefix => sub.toLowerCase().startsWith(prefix));
-          if (isExcluded) return;
-
-          // 2. Kapsama yalnız erişilebilir HTTP/S uygulamaları alınır. Tek başına HTTP
+          // Kapsama yalnız erişilebilir HTTP/S uygulamaları alınır. Subdomain adı
+          // filtrelenmez; mail.*, webmail.* ve benzeri adlarda yönetim paneli olabilir.
+          // Tek başına HTTP
           // 301 yönlendirmesi yeterli değildir; HTTPS hedefi erişilemiyorsa scope'a eklenmez.
           if (detail && detail.ports && detail.ports.length > 0) {
               const hasActiveWeb = detail.ports.some(p =>
