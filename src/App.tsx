@@ -73,7 +73,7 @@ interface TechInfo {
   category: string;
   version?: string;
   confidence?: number;
-  sources?: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'urlscan' | 'shodan'>;
+  sources?: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'shodan'>;
   evidence?: string[];
   observedAt?: string;
   passive?: boolean;
@@ -90,10 +90,12 @@ interface SubdomainDetail {
   security?: any;
   waf?: any;
   cookies?: any[];
+  responseHeaders?: Record<string, string>;
   cors?: any;
   probeErrors?: ProbeError[];
   evidence?: { source: 'render-live' | 'browserless-live'; redirected?: boolean; finalTarget?: string; externalRedirect?: { target: string; status?: number } };
   tlsVerification?: { verified: boolean; source: 'render-live' | 'browserless-live' };
+  browserlessError?: string;
   advancedAnalyzing?: boolean;
 }
 
@@ -596,6 +598,34 @@ function App() {
       else ports = [...ports, browserPort].sort((a, b) => a.port - b.port);
     }
 
+    // Tarayıcı hedefin dışarıdan erişilebilir olduğunu doğruladı. Bu açık sinyal
+    // üzerine yalnız bu hedef için Browserless fallback'ini değerlendiririz.
+    // Normal /api/advanced çağrıları Browserless çalıştırmaz.
+    let browserlessDetails: Partial<SubdomainDetail> | undefined;
+    if (browserHttpsVerified && !signal?.aborted) {
+      try {
+        const advanced = await fetchJsonWithTimeout<{
+          ssl?: any; advanced?: { security?: any; waf?: any; cookies?: any[]; responseHeaders?: Record<string, string> } | null;
+          technologies?: TechInfo[]; evidence?: SubdomainDetail['evidence'];
+          tlsVerification?: SubdomainDetail['tlsVerification']; browserlessError?: string;
+        }>(`${API_BASE_URL}/api/advanced?subdomain=${encodeURIComponent(sub)}&browserVerified=1`, {}, 45000, signal);
+        browserlessDetails = {
+          ssl: advanced.ssl,
+          security: advanced.advanced?.security,
+          waf: advanced.advanced?.waf,
+          cookies: advanced.advanced?.cookies,
+          responseHeaders: advanced.advanced?.responseHeaders,
+          technologies: advanced.technologies,
+          evidence: advanced.evidence,
+          tlsVerification: advanced.tlsVerification,
+          browserlessError: advanced.browserlessError
+        };
+      } catch {
+        // Tarayıcı doğrulaması görünür kalır; Browserless ayrıntısı sonraki
+        // kullanıcı isteğinde tekrar denenebilir.
+      }
+    }
+
     setSubdomainDetails(prev => ({
       ...prev,
       [sub]: {
@@ -608,6 +638,7 @@ function App() {
         } : browserHttpsVerified ? {
           ports
         } : {}),
+        ...(browserlessDetails || {}),
         analyzing: false,
         techAnalyzing: false
       }
@@ -746,6 +777,7 @@ function App() {
                     security: data.advanced?.security,
                     waf: data.advanced?.waf,
                     cookies: data.advanced?.cookies,
+                    responseHeaders: data.advanced?.responseHeaders,
                     evidence: data.evidence,
                     tlsVerification: data.tlsVerification,
                     technologies: Array.isArray(data.technologies) ? data.technologies : [],
@@ -1269,7 +1301,7 @@ function App() {
                                               const portStr = (scheme === 'https' && p.port === 443) || (scheme === 'http' && p.port === 80) ? '' : `:${p.port}`;
                                               const targetUrl = isWebPort ? `${scheme}://${sub}${portStr}` : undefined;
                                               const verificationLabel = p.verificationSource === 'browser' ? ' · Kullanıcının tarayıcısından doğrulandı' :
-                                                p.verificationSource === 'browserless' ? ' · Browserless canlı render ile doğrulandı' :
+                                                p.verificationSource === 'browserless' ? ' · Browserless canlı doğrulamasıyla doğrulandı' :
                                                   p.verificationSource === 'render' ? ' · Render canlı GET ile doğrulandı' : '';
                                               const title = `${p.service || 'Servis'} · ${(p.transport || 'tcp').toUpperCase()} · ${p.status}${verificationLabel}`;
 
@@ -1443,14 +1475,14 @@ function App() {
                                                         </td>
                                                         <td>
                                                             {detail.advancedAnalyzing ? <AnalysisWaitIndicator /> :
-                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserlessVerified ? 'TLS doğrulandı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserlessVerified ? 'TLS doğrulandı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
                                                         <td className="col-cert">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.ssl ? (
                                                                 <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
                                                                     {detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft ?? '—'}g)` : 'Geçersiz'}
                                                                 </span>
-                                                            ) : browserlessVerified ? <span className="text-success">Browserless üzerinden TLS doğrulandı</span> : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
+                                                            ) : browserlessVerified ? <span className="text-success">Browserless üzerinden doğrulandı</span> : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
                                                         </td>
                                                         <td className="col-header-score">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
@@ -1460,8 +1492,14 @@ function App() {
                                                                  <i><b style={{ width: `${detail.security.score}%` }}></b></i>
                                                                  <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
                                                                  {browserlessVerified && <small className="passive-source-label">Browserless canlı render</small>}
+                                                                 {detail.responseHeaders && Object.keys(detail.responseHeaders).length > 0 && (
+                                                                   <details className="response-headers" open>
+                                                                     <summary>HTTP başlıkları ({Object.keys(detail.responseHeaders).length})</summary>
+                                                                     {Object.entries(detail.responseHeaders).map(([name, value]) => <div key={name}><code>{name}</code>: {value}</div>)}
+                                                                   </details>
+                                                                 )}
                                                                </div>
-                                                             ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                             ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
                                                         <td className="col-missing">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.security?.missing ? (
@@ -1470,12 +1508,12 @@ function App() {
                                                                         <span key={mIdx} className="missing-tag">{m}</span>
                                                                     ))}
                                                                 </div>
-                                                            ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                            ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
                                                         <td>
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
                                                              detail.waf?.detected ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> :
-                                                             detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? 'Render erişemedi' : '-'}</span>}
+                                                             detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
                                                         <td className="col-tech-stack">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
@@ -1487,7 +1525,7 @@ function App() {
                                                                     return <span key={techIdx} className={`tech-badge ${tech.passive ? 'tech-passive' : 'tech-gray'}`} title={`${tech.category} · ${source}`}>{label}</span>;
                                                                   })}
                                                                 </div>
-                                                              ) : <span className="text-muted">{browserlessVerified ? 'Tespit yok' : browserVerified ? 'Render erişemedi' : 'Tespit yok'}</span>}
+                                                              ) : <span className="text-muted">{browserlessVerified ? 'Tespit yok' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : 'Tespit yok'}</span>}
                                                         </td>
                                                     </tr>
                                                 );

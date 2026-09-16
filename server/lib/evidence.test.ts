@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { lightweightTechnologies, securityFromHeaders } from './evidence';
+import { lightweightTechnologies, publicResponseHeaders, securityFromHeaders } from './evidence';
 
 test('canlı kanıt güvenlik header puanını hesaplar', () => {
   const result = securityFromHeaders({
@@ -30,4 +30,12 @@ test('sunucu sürümünü ve Spring/Java header kanıtını korur', () => {
   const result = lightweightTechnologies({ server: 'Caddy/2.8.4', 'x-application-context': 'app:prod', 'x-powered-by': 'Java' }, '');
   assert.deepEqual(result.map((item) => item.name).sort(), ['Caddy', 'Java', 'Spring']);
   assert.equal(result.find((item) => item.name === 'Caddy')?.version, '2.8.4');
+});
+
+test('gösterilen HTTP başlıklarından hassas kimlik bilgilerini çıkarır', () => {
+  const headers = publicResponseHeaders({
+    server: 'nginx', 'content-type': 'text/html', 'set-cookie': 'session=secret',
+    authorization: 'Bearer secret', 'www-authenticate': 'Basic realm=private'
+  });
+  assert.deepEqual(headers, { server: 'nginx', 'content-type': 'text/html' });
 });

@@ -10,13 +10,12 @@ import otx from './otx';
 import rapiddns from './rapiddns';
 import securitytrails from './securitytrails';
 import shodan from './shodan';
-import urlscan from './urlscan';
 import virustotal from './virustotal';
 import wayback from './wayback';
 import { dedupeSourceHits, type MergedSourceHit, type SourceContext, type SourceStatus, type SubdomainSource } from './types';
 
 export const ALL_SOURCES: SubdomainSource[] = [
-  crtsh, hackertarget, certspotter, rapiddns, urlscan,
+  crtsh, hackertarget, certspotter, rapiddns,
   otx, securitytrails, virustotal, chaos, shodan, wayback, certsan
 ];
 

@@ -50,6 +50,8 @@ export interface HttpEvidence {
   tlsVerified: boolean;
   server?: string;
   poweredBy?: string;
+  /** Kullanıcıya gösterilebilen, hassas değerleri çıkarılmış yanıt başlıkları. */
+  responseHeaders?: Record<string, string>;
   redirects: RedirectEvidence[];
   finalTarget?: string;
   externalRedirect?: ExternalRedirectEvidence;
@@ -66,6 +68,16 @@ export interface HttpEvidence {
 const BODY_LIMIT = 128 * 1024;
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const evidenceCache = new Map<string, { expiresAt: number; value: HttpEvidence }>();
+
+const PRIVATE_RESPONSE_HEADERS = new Set(['set-cookie', 'cookie', 'authorization', 'proxy-authorization', 'www-authenticate']);
+
+export function publicResponseHeaders(headers: Record<string, string | string[] | undefined>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers)
+    .map(([name, value]) => [name.toLowerCase(), Array.isArray(value) ? value.join('; ') : value] as const)
+    .filter(([name, value]) => !PRIVATE_RESPONSE_HEADERS.has(name) && typeof value === 'string' && value.length > 0)
+    .slice(0, 40)
+    .map(([name, value]) => [name, value.slice(0, 1024)]));
+}
 
 const cacheKey = (protocol: string, hostname: string, port: number) => `${protocol}//${hostname.toLowerCase()}:${port}`;
 
@@ -197,6 +209,7 @@ export async function collectRenderEvidence(protocol: 'http:' | 'https:', hostna
           tlsVerified: current.protocol === 'https:', redirects, finalTarget: sanitizedUrl(current),
           ...(headers.server ? { server: String(headers.server).slice(0, 256) } : {}),
           ...(headers['x-powered-by'] ? { poweredBy: String(headers['x-powered-by']).slice(0, 256) } : {}),
+          responseHeaders: publicResponseHeaders(headers),
           security: securityFromHeaders(headers),
           waf: (() => { const name = detectWaf(headers as IncomingHttpHeaders); return name ? { detected: true, name } : { detected: false }; })(),
           cookies: inspectCookies(Array.isArray(headers['set-cookie']) ? headers['set-cookie'] : headers['set-cookie'] ? [headers['set-cookie']] : [], current.protocol === 'https:'),
@@ -205,7 +218,7 @@ export async function collectRenderEvidence(protocol: 'http:' | 'https:', hostna
         };
         if (current.hostname.toLowerCase() !== originalHost) {
           evidence.externalRedirect = { target: sanitizedUrl(current), status, security: evidence.security, waf: evidence.waf, cookies: evidence.cookies, technologies: evidence.technologies };
-          delete evidence.security; delete evidence.waf; delete evidence.cookies; delete evidence.technologies;
+          delete evidence.security; delete evidence.waf; delete evidence.cookies; delete evidence.technologies; delete evidence.responseHeaders;
         }
         return putEvidence(evidence);
       }
