@@ -1213,11 +1213,17 @@ function App() {
                   <div className="loading-state">
                     {wakingUp[selectedDomain] ? (
                         <div className="wakeup-container">
-                            <div className="wakeup-icon">
-                                <svg xmlns="http://www.w3.org/0000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><polyline points="21 3 21 8 16 8"/></svg>
+                            <div className="wakeup-visual" role="img" aria-label="Sunucu yaklaşık 45 saniyede uyanıyor">
+                                <svg className="wakeup-ring" viewBox="0 0 100 100" aria-hidden="true">
+                                    <circle className="wakeup-ring-track" cx="50" cy="50" r="44" />
+                                    <circle className="wakeup-ring-progress" cx="50" cy="50" r="44" />
+                                </svg>
+                                <span className="wakeup-hourglass" aria-hidden="true">
+                                  <svg viewBox="0 0 24 24"><path d="M6 2h12M6 22h12M7 2v4c0 2.6 2.1 4.1 5 6-2.9 1.9-5 3.4-5 6v4M17 2v4c0 2.6-2.1 4.1-5 6 2.9 1.9 5 3.4 5 6v4"/><path d="M9 5h6M9 19h6" /></svg>
+                                </span>
                             </div>
                             <h4>Sunucu Uyanıyor...</h4>
-                            <p>Uzun süredir kullanılmadığı için sunucu uyku modundan çıkıyor. Bu işlem <b>~45 saniye</b> sürebilir. Lütfen bekleyin.</p>
+                            <p>Uzun süredir kullanılmadığı için sunucu uyku modundan çıkıyor. Halka dolarken bağlantı hazırlanıyor; bu işlem <b>~45 saniye</b> sürebilir.</p>
                             <div className="progress-bar-container">
                                 <div className="progress-bar-fill"></div>
                             </div>
