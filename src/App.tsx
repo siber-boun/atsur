@@ -90,10 +90,18 @@ interface SubdomainDetail {
   security?: any;
   waf?: any;
   cookies?: any[];
-  responseHeaders?: Record<string, string>;
   cors?: any;
   probeErrors?: ProbeError[];
-  evidence?: { source: 'render-live' | 'browserless-live'; redirected?: boolean; finalTarget?: string; externalRedirect?: { target: string; status?: number } };
+  evidence?: {
+    source: 'render-live' | 'browserless-live';
+    status?: number;
+    protocol?: 'http:' | 'https:';
+    server?: string;
+    redirectCount?: number;
+    redirected?: boolean;
+    finalTarget?: string;
+    externalRedirect?: { target: string; status?: number };
+  };
   tlsVerification?: { verified: boolean; source: 'render-live' | 'browserless-live' };
   browserlessError?: string;
   advancedAnalyzing?: boolean;
@@ -110,6 +118,25 @@ interface EmailSecurityInfo {
   score: number;
   grade: string;
 }
+
+const httpStatusLabel = (status?: number) => {
+  if (status === undefined) return 'Yanıt alınamadı';
+  const labels: Record<number, string> = {
+    200: 'OK', 201: 'Created', 202: 'Accepted', 204: 'No Content',
+    301: 'Moved', 302: 'Found', 303: 'See Other', 307: 'Temporary Redirect', 308: 'Permanent Redirect',
+    400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 429: 'Too Many Requests',
+    500: 'Server Error', 502: 'Bad Gateway', 503: 'Unavailable', 504: 'Gateway Timeout'
+  };
+  return labels[status] || 'HTTP yanıtı';
+};
+
+const httpStatusTone = (status?: number) => {
+  if (status === undefined) return 'unknown';
+  if (status >= 200 && status < 300) return 'success';
+  if (status >= 300 && status < 400) return 'info';
+  if (status >= 400 && status < 500) return 'warning';
+  return 'danger';
+};
 
 const designProcessPhases = [
   {
@@ -361,6 +388,7 @@ function App() {
   const [emailSecurity, setEmailSecurity] = useState<Record<string, EmailSecurityInfo>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [wakingUp, setWakingUp] = useState<Record<string, boolean>>({});
+  const [wakeUpProgress, setWakeUpProgress] = useState<Record<string, number>>({});
   const [error, setError] = useState<Record<string, string>>({});
   const [scanMeta, setScanMeta] = useState<Record<string, ScanMeta>>({});
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
@@ -519,15 +547,24 @@ function App() {
     setLoading(prev => ({ ...prev, [domain]: true }));
     setError(prev => ({ ...prev, [domain]: '' }));
     setWakingUp(prev => ({ ...prev, [domain]: false }));
+    setWakeUpProgress(prev => ({ ...prev, [domain]: 0 }));
 
     // Render uyku modundan uyanıyorsa 3 saniye sonra kullanıcıyı bilgilendir
+    let wakeUpProgressTimer: ReturnType<typeof setInterval> | undefined;
     const wakeUpTimer = setTimeout(() => {
         setWakingUp(prev => ({ ...prev, [domain]: true }));
+        const startedAt = Date.now();
+        wakeUpProgressTimer = setInterval(() => {
+          const progress = Math.min(100, Math.floor((Date.now() - startedAt) / 450));
+          setWakeUpProgress(prev => ({ ...prev, [domain]: progress }));
+          if (progress === 100 && wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
+        }, 250);
     }, 3000);
     
     try {
       const raw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}`, {}, 60000);
       clearTimeout(wakeUpTimer);
+      if (wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
 
       // Faz 5'ten itibaren backend tarama metadatasıyla birlikte bir nesne döner;
       // eski dizi cevabı da önbellekteki/geri alınmış sürümler için desteklenir.
@@ -546,9 +583,11 @@ function App() {
       
     } catch (err: any) {
       clearTimeout(wakeUpTimer);
+      if (wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
       setError(prev => ({ ...prev, [domain]: 'Subdomainler alınırken bir hata oluştu veya servise geçici olarak ulaşılamıyor.' }));
     } finally {
       clearTimeout(wakeUpTimer);
+      if (wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
       setLoading(prev => ({ ...prev, [domain]: false }));
       setWakingUp(prev => ({ ...prev, [domain]: false }));
     }
@@ -605,7 +644,7 @@ function App() {
     if (browserHttpsVerified && !signal?.aborted) {
       try {
         const advanced = await fetchJsonWithTimeout<{
-          ssl?: any; advanced?: { security?: any; waf?: any; cookies?: any[]; responseHeaders?: Record<string, string> } | null;
+          ssl?: any; advanced?: { security?: any; waf?: any; cookies?: any[] } | null;
           technologies?: TechInfo[]; evidence?: SubdomainDetail['evidence'];
           tlsVerification?: SubdomainDetail['tlsVerification']; browserlessError?: string;
         }>(`${API_BASE_URL}/api/advanced?subdomain=${encodeURIComponent(sub)}&browserVerified=1`, {}, 45000, signal);
@@ -614,7 +653,6 @@ function App() {
           security: advanced.advanced?.security,
           waf: advanced.advanced?.waf,
           cookies: advanced.advanced?.cookies,
-          responseHeaders: advanced.advanced?.responseHeaders,
           technologies: advanced.technologies,
           evidence: advanced.evidence,
           tlsVerification: advanced.tlsVerification,
@@ -777,7 +815,6 @@ function App() {
                     security: data.advanced?.security,
                     waf: data.advanced?.waf,
                     cookies: data.advanced?.cookies,
-                    responseHeaders: data.advanced?.responseHeaders,
                     evidence: data.evidence,
                     tlsVerification: data.tlsVerification,
                     technologies: Array.isArray(data.technologies) ? data.technologies : [],
@@ -1010,10 +1047,12 @@ function App() {
                   >
                     <div className="domain-info-group">
                       <span className="domain-icon" aria-hidden="true"></span>
-                      <span className="domain-text">{d}</span>
+                      <div className="domain-copy">
+                        <span className="domain-text">{d}</span>
+                        <span className={`status-badge ${statusClass}`}>{status}</span>
+                      </div>
                     </div>
                     <div className="domain-actions-group">
-                      <span className={`status-badge ${statusClass}`}>{status}</span>
                       <button 
                         className="delete-btn" 
                         onClick={(e) => handleDeleteDomain(d, e)}
@@ -1213,20 +1252,17 @@ function App() {
                   <div className="loading-state">
                     {wakingUp[selectedDomain] ? (
                         <div className="wakeup-container">
-                            <div className="wakeup-visual" role="img" aria-label="Sunucu yaklaşık 45 saniyede uyanıyor">
+                            <div className="wakeup-visual" role="img" aria-label={`Bilgi toplama sistemi hazırlanıyor: yüzde ${wakeUpProgress[selectedDomain] ?? 0}`}>
                                 <svg className="wakeup-ring" viewBox="0 0 100 100" aria-hidden="true">
                                     <circle className="wakeup-ring-track" cx="50" cy="50" r="44" />
                                     <circle className="wakeup-ring-progress" cx="50" cy="50" r="44" />
                                 </svg>
-                                <span className="wakeup-hourglass" aria-hidden="true">
-                                  <svg viewBox="0 0 24 24"><path d="M6 2h12M6 22h12M7 2v4c0 2.6 2.1 4.1 5 6-2.9 1.9-5 3.4-5 6v4M17 2v4c0 2.6-2.1 4.1-5 6 2.9 1.9 5 3.4 5 6v4"/><path d="M9 5h6M9 19h6" /></svg>
+                                <span className="wakeup-magnifier" aria-hidden="true">
+                                  <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" /></svg>
                                 </span>
                             </div>
-                            <h4>Sunucu Uyanıyor...</h4>
-                            <p>Uzun süredir kullanılmadığı için sunucu uyku modundan çıkıyor. Halka dolarken bağlantı hazırlanıyor; bu işlem <b>~45 saniye</b> sürebilir.</p>
-                            <div className="progress-bar-container">
-                                <div className="progress-bar-fill"></div>
-                            </div>
+                            <strong className="wakeup-progress-count">%{wakeUpProgress[selectedDomain] ?? 0}</strong>
+                            <h4>Bilgi toplama sistemi hazırlanıyor</h4>
                         </div>
                     ) : (
                         <>
@@ -1259,9 +1295,6 @@ function App() {
                         const itemIp = isLegacyString ? undefined : item.ip;
                         
                         const detail = subdomainDetails[sub];
-                        const serviceTechnologies = (detail?.technologies || []).filter(
-                          technology => !technology.name.toLowerCase().includes('cloudflare')
-                        );
 
                         let sourceBadgeClass = 'source-crt';
                         let sourceLabel = source || 'Pasif kaynak';
@@ -1338,26 +1371,6 @@ function App() {
                                         <span className="no-ports-text">Taranan 45 portta açık servis bulunamadı</span>
                                         )}
 
-                                        {serviceTechnologies.length > 0 && (                                      <div className="tech-container">
-                                          {serviceTechnologies.map((t, tIdx) => {
-                                              let techClass = 'tech-gray';
-                                              switch(t.category) {
-                                                  case 'CMS': techClass = 'tech-purple'; break;
-                                                  case 'Frontend': techClass = 'tech-blue'; break;
-                                                  case 'Backend': techClass = 'tech-orange'; break;
-                                                  case 'Sunucu': techClass = 'tech-gray'; break;
-                                                  case 'CDN': techClass = 'tech-green'; break;
-                                                  case 'Analitik': techClass = 'tech-yellow'; break;
-                                                  case 'Güvenlik': techClass = 'tech-red'; break;
-                                              }
-                                              return (
-                                                  <span key={tIdx} className={`tech-badge ${techClass}`} title={t.category}>
-                                                      {t.name}
-                                                  </span>
-                                              );
-                                          })}
-                                      </div>
-                                    )}
                                   </div>
                               ) : (
                                   <button className="btn-text btn-small" onClick={() => handleAnalyzeSubdomain(sub)}>
@@ -1456,12 +1469,12 @@ function App() {
                                         <thead>
                                             <tr>
                                                 <th>Subdomain</th>
-                                                <th>SSL Skoru</th>
+                                                <th className="col-ssl-score">SSL Skoru</th>
                                                 <th>Sertifika</th>
-                                                <th>HTTP Header Güvenliği</th>
+                                                <th>HTTP Yanıt Profili</th>
                                                 <th>Eksik Headerlar</th>
-                                                <th>WAF Koruması</th>
-                                                <th>Teknoloji Yığını</th>
+                                                <th className="col-waf" title="WAF Koruması">WAF</th>
+                                                <th className="col-tech-stack" title="Teknoloji Yığını">TEKNOLOJİ</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -1472,6 +1485,16 @@ function App() {
                                                 if (!detail || !hasSecurityDetail(detail)) return null;
                                                 const browserVerified = isBrowserVerified(detail);
                                                 const browserlessVerified = detail.evidence?.source === 'browserless-live' || detail.tlsVerification?.source === 'browserless-live';
+                                                const visibleTechnologies = (detail.technologies || []).filter(tech =>
+                                                  tech.category !== 'CDN' && !(detail.waf?.detected && /cloudflare/i.test(detail.waf.name || '') && /cloudflare/i.test(tech.name))
+                                                );
+                                                const httpPortResults = (detail.ports || []).filter((port): port is PortInfo & { status: number; protocol: 'http:' | 'https:' } =>
+                                                  typeof port.status === 'number' && (port.protocol === 'http:' || port.protocol === 'https:')
+                                                );
+                                                const serviceHttpProfile = httpPortResults.find(port => port.protocol === 'https:') || httpPortResults[0];
+                                                const profileStatus = detail.evidence?.status ?? serviceHttpProfile?.status;
+                                                const profileProtocol = detail.evidence?.protocol ?? serviceHttpProfile?.protocol;
+                                                const hasHttpProfile = Boolean(detail.evidence || serviceHttpProfile);
 
                                                 return (
                                                     <tr key={idx}>
@@ -1479,31 +1502,40 @@ function App() {
                                                           {sub}
                                                           {detail.evidence?.externalRedirect?.target && <small className="passive-source-label" title="Son hedefin bulguları ilk hedefin puanına dahil edilmez">↳ Dış yönlendirme: {detail.evidence.externalRedirect.target}</small>}
                                                         </td>
-                                                        <td>
+                                                        <td className="col-ssl-score">
                                                             {detail.advancedAnalyzing ? <AnalysisWaitIndicator /> :
-                                                             detail.ssl ? <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span> : <span className="text-muted">{browserlessVerified ? 'TLS doğrulandı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
+                                                             detail.ssl ? (
+                                                               <div className="ssl-summary">
+                                                                 <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span>
+                                                                 {detail.ssl.protocol && <small>{detail.ssl.protocol}</small>}
+                                                                 {(detail.ssl.legacyProtocols?.tls10 === 'yes' || detail.ssl.legacyProtocols?.tls11 === 'yes') && <small className="ssl-warning">Eski TLS</small>}
+                                                               </div>
+                                                             ) : <span className="text-muted">{browserlessVerified ? 'TLS doğrulandı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
                                                         <td className="col-cert">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.ssl ? (
-                                                                <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
-                                                                    {detail.ssl.valid ? `Geçerli (${detail.ssl.daysLeft ?? '—'}g)` : 'Geçersiz'}
-                                                                </span>
+                                                                <div className="cert-summary">
+                                                                  <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
+                                                                      {detail.ssl.valid ? `Geçerli · ${detail.ssl.daysLeft ?? '—'}g` : 'Geçersiz'}
+                                                                  </span>
+                                                                  {detail.ssl.issuer && <small title={detail.ssl.issuer}>{detail.ssl.issuer}</small>}
+                                                                  <small className={detail.ssl.hostnameMatch === false || detail.ssl.chainComplete === false ? 'ssl-warning' : ''}>
+                                                                    {detail.ssl.hostnameMatch === false ? 'Host eşleşmedi' : detail.ssl.chainComplete === false ? 'Zincir eksik' : 'Host eşleşti · Zincir tamam'}
+                                                                  </small>
+                                                                </div>
                                                             ) : browserlessVerified ? <span className="text-success">Browserless üzerinden doğrulandı</span> : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
                                                         </td>
-                                                        <td className="col-header-score">
+                                                        <td className="col-http-profile">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
-                                                             detail.security ? (
-                                                               <div className="header-score">
-                                                                 <span><strong>{detail.security.score}</strong>/100</span>
-                                                                 <i><b style={{ width: `${detail.security.score}%` }}></b></i>
-                                                                 <span className={`grade-badge grade-${detail.security.grade}`}>{detail.security.grade}</span>
-                                                                 {browserlessVerified && <small className="passive-source-label">Browserless canlı render</small>}
-                                                                 {detail.responseHeaders && Object.keys(detail.responseHeaders).length > 0 && (
-                                                                   <details className="response-headers" open>
-                                                                     <summary>HTTP başlıkları ({Object.keys(detail.responseHeaders).length})</summary>
-                                                                     {Object.entries(detail.responseHeaders).map(([name, value]) => <div key={name}><code>{name}</code>: {value}</div>)}
-                                                                   </details>
-                                                                 )}
+                                                             hasHttpProfile ? (
+                                                               <div className="http-profile">
+                                                                 <span className={`http-status http-status-${httpStatusTone(profileStatus)}`}>
+                                                                   {profileStatus ?? '—'} <small>{httpStatusLabel(profileStatus)}</small>
+                                                                 </span>
+                                                                 <span>{profileProtocol === 'https:' ? 'HTTPS' : profileProtocol === 'http:' ? 'HTTP' : 'Protokol bilinmiyor'}{!detail.evidence && serviceHttpProfile ? ` · :${serviceHttpProfile.port}` : ''}</span>
+                                                                 <span>{detail.evidence ? (detail.evidence.source === 'browserless-live' ? 'Browserless canlı' : 'Render canlı') : 'Servis taraması'}</span>
+                                                                 {detail.evidence?.redirectCount ? <span>↳ {detail.evidence.redirectCount} yönlendirme</span> : null}
+                                                                 {detail.evidence?.server ? <span className="http-server">{detail.evidence.server}</span> : null}
                                                                </div>
                                                              ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
@@ -1516,16 +1548,16 @@ function App() {
                                                                 </div>
                                                             ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
-                                                        <td>
+                                                        <td className="col-waf">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
                                                              detail.waf?.detected ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> :
                                                              detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
                                                         </td>
                                                         <td className="col-tech-stack">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
-                                                              (detail.technologies || []).filter(tech => tech.category !== 'CDN').length > 0 ? (
+                                                              visibleTechnologies.length > 0 ? (
                                                                 <div className="tech-stack-list">
-                                                                  {(detail.technologies || []).filter(tech => tech.category !== 'CDN').slice(0, 6).map((tech, techIdx) => {
+                                                                  {visibleTechnologies.slice(0, 6).map((tech, techIdx) => {
                                                                     const label = `${tech.name}${tech.version ? ` ${tech.version}` : ''}`;
                                                                     const source = tech.passive ? 'Pasif Shodan gözlemi' : `${tech.confidence ?? '—'}% güven · ${(tech.sources || []).join(', ')}`;
                                                                     return <span key={techIdx} className={`tech-badge ${tech.passive ? 'tech-passive' : 'tech-gray'}`} title={`${tech.category} · ${source}`}>{label}</span>;

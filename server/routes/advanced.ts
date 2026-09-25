@@ -35,9 +35,18 @@ router.get('/api/advanced', async (req, res) => {
   const technologies = await detectTechnologies(subdomain, { sharedEdge, skipLiveFetch: true, ...(evidence?.technologies ? { live: evidence.technologies } : {}) });
   res.json({
     ssl: sslInfo,
-    advanced: evidence ? { security: evidence.security, waf: evidence.waf, cookies: evidence.cookies, responseHeaders: evidence.responseHeaders } : null,
+    advanced: evidence ? { security: evidence.security, waf: evidence.waf, cookies: evidence.cookies } : null,
     technologies,
-    ...(evidence ? { evidence: { source: evidence.source, redirected: evidence.redirects.length > 0, finalTarget: evidence.finalTarget, externalRedirect: evidence.externalRedirect } } : {}),
+    ...(evidence ? { evidence: {
+      source: evidence.source,
+      status: evidence.status,
+      protocol: evidence.protocol,
+      server: evidence.server,
+      redirectCount: evidence.redirects.length,
+      redirected: evidence.redirects.length > 0,
+      finalTarget: evidence.finalTarget,
+      externalRedirect: evidence.externalRedirect
+    } } : {}),
     ...(!sslInfo && evidence?.tlsVerified ? { tlsVerification: { verified: true, source: evidence.source } } : {}),
     ...(browserlessError ? { browserlessError } : {})
   });
