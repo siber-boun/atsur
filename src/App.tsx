@@ -388,7 +388,6 @@ function App() {
   const [emailSecurity, setEmailSecurity] = useState<Record<string, EmailSecurityInfo>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [wakingUp, setWakingUp] = useState<Record<string, boolean>>({});
-  const [wakeUpProgress, setWakeUpProgress] = useState<Record<string, number>>({});
   const [error, setError] = useState<Record<string, string>>({});
   const [scanMeta, setScanMeta] = useState<Record<string, ScanMeta>>({});
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
@@ -400,7 +399,10 @@ function App() {
   const [autoAnalysis, setAutoAnalysis] = useState<{
     domain: string;
     stage: 'waiting-services' | 'services' | 'waiting-advanced' | 'done';
+    startsAt?: number;
   } | null>(null);
+
+  const [autoCountdown, setAutoCountdown] = useState(5);
 
   const clearAutoAnalysisTimer = () => {
     if (autoAnalysisTimerRef.current !== null) {
@@ -558,30 +560,23 @@ function App() {
 
   const fetchSubdomains = async (domain: string, forceRefresh: boolean = false) => {
     if (!forceRefresh && subdomains[domain] && subdomains[domain].length > 0) {
+        // A failed refresh must not block automation when cached results are selected again.
+        setError(prev => ({ ...prev, [domain]: '' }));
         return;
     }
     
     setLoading(prev => ({ ...prev, [domain]: true }));
     setError(prev => ({ ...prev, [domain]: '' }));
     setWakingUp(prev => ({ ...prev, [domain]: false }));
-    setWakeUpProgress(prev => ({ ...prev, [domain]: 0 }));
 
     // Render uyku modundan uyanıyorsa 3 saniye sonra kullanıcıyı bilgilendir
-    let wakeUpProgressTimer: ReturnType<typeof setInterval> | undefined;
     const wakeUpTimer = setTimeout(() => {
         setWakingUp(prev => ({ ...prev, [domain]: true }));
-        const startedAt = Date.now();
-        wakeUpProgressTimer = setInterval(() => {
-          const progress = Math.min(100, Math.floor((Date.now() - startedAt) / 450));
-          setWakeUpProgress(prev => ({ ...prev, [domain]: progress }));
-          if (progress === 100 && wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
-        }, 250);
     }, 3000);
     
     try {
       const raw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}`, {}, 60000);
       clearTimeout(wakeUpTimer);
-      if (wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
 
       // Faz 5'ten itibaren backend tarama metadatasıyla birlikte bir nesne döner;
       // eski dizi cevabı da önbellekteki/geri alınmış sürümler için desteklenir.
@@ -600,11 +595,9 @@ function App() {
       
     } catch (err: any) {
       clearTimeout(wakeUpTimer);
-      if (wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
       setError(prev => ({ ...prev, [domain]: 'Subdomainler alınırken bir hata oluştu veya servise geçici olarak ulaşılamıyor.' }));
     } finally {
       clearTimeout(wakeUpTimer);
-      if (wakeUpProgressTimer) clearInterval(wakeUpProgressTimer);
       setLoading(prev => ({ ...prev, [domain]: false }));
       setWakingUp(prev => ({ ...prev, [domain]: false }));
     }
@@ -612,6 +605,7 @@ function App() {
 
   const handleDomainClick = (domain: string) => {
     clearAutoAnalysisTimer();
+    setAutoCountdown(5);
     setAutoAnalysis({
       domain,
       stage: advancedBusyRef.current.has(domain) ? 'done' :
@@ -774,6 +768,11 @@ function App() {
               failed ? { error: `${failed} hedef zaman aşımı veya API hatası nedeniyle tamamlanamadı.` } : {})
           }
         }));
+        // Schedule the next step from actual completion, never from a progress render.
+        setAutoAnalysis(prev => prev?.domain === domain && prev.stage === 'services'
+          ? { domain, stage: cancelled ? 'done' : 'waiting-advanced',
+              ...(!cancelled ? { startsAt: Date.now() + 5000 } : {}) }
+          : prev);
       } finally {
         setSubdomainDetails(prev => Object.fromEntries(
           Object.entries(prev).map(([subdomain, detail]) => [subdomain, {
@@ -879,38 +878,36 @@ function App() {
 
   const selectedSubdomainsReady = Boolean(selectedDomain && subdomains[selectedDomain]?.length &&
     !loading[selectedDomain] && !error[selectedDomain]);
-  const selectedServiceRun = selectedDomain ? serviceRuns[selectedDomain] : undefined;
-  const selectedAdvancedRunning = Boolean(selectedDomain && advancedRuns[selectedDomain]?.running);
+  const automaticStage = autoAnalysis?.domain === selectedDomain ? autoAnalysis.stage : undefined;
+  const automaticStartsAt = autoAnalysis?.domain === selectedDomain ? autoAnalysis.startsAt : undefined;
 
   useEffect(() => {
-    if (step !== 'dashboard' || !userDataReady || !selectedDomain ||
-      autoAnalysis?.domain !== selectedDomain || autoAnalysis.stage === 'done') return;
+    if (step !== 'dashboard' || !userDataReady || !selectedDomain || !selectedSubdomainsReady ||
+      automaticStage !== 'waiting-services' || automaticStartsAt !== undefined) return;
+    setAutoAnalysis(prev => prev?.domain === selectedDomain && prev.stage === 'waiting-services'
+      ? { ...prev, startsAt: Date.now() + 5000 } : prev);
+  }, [step, userDataReady, selectedDomain, selectedSubdomainsReady, automaticStage, automaticStartsAt]);
 
-    if (selectedAdvancedRunning) {
-      setAutoAnalysis({ domain: selectedDomain, stage: 'done' });
-      return;
-    }
-    if (autoAnalysis.stage === 'services') {
-      if (!selectedServiceRun?.running && selectedServiceRun?.stage === 'Servis taraması tamamlandı') {
-        setAutoAnalysis({ domain: selectedDomain, stage: 'waiting-advanced' });
-      } else if (!selectedServiceRun?.running && selectedServiceRun?.stage === 'Servis taraması iptal edildi') {
-        setAutoAnalysis({ domain: selectedDomain, stage: 'done' });
-      }
-      return;
-    }
-    if (!selectedSubdomainsReady || selectedServiceRun?.running) return;
+  useEffect(() => {
+    if (step !== 'dashboard' || !userDataReady || !selectedDomain || !selectedSubdomainsReady ||
+      automaticStartsAt === undefined ||
+      (automaticStage !== 'waiting-services' && automaticStage !== 'waiting-advanced')) return;
 
-    const stage = autoAnalysis.stage;
+    const stage = automaticStage;
+    const updateCountdown = () => setAutoCountdown(Math.max(0, Math.ceil((automaticStartsAt - Date.now()) / 1000)));
+    updateCountdown();
+    const countdown = setInterval(updateCountdown, 200);
     const timer = setTimeout(() => {
       autoAnalysisTimerRef.current = null;
       startAutomaticAnalysis(stage);
-    }, 5000);
+    }, Math.max(0, automaticStartsAt - Date.now()));
     autoAnalysisTimerRef.current = timer;
     return () => {
+      clearInterval(countdown);
       clearTimeout(timer);
       if (autoAnalysisTimerRef.current === timer) autoAnalysisTimerRef.current = null;
     };
-  }, [step, userDataReady, selectedDomain, autoAnalysis, selectedSubdomainsReady, selectedServiceRun, selectedAdvancedRunning]);
+  }, [step, userDataReady, selectedDomain, selectedSubdomainsReady, automaticStage, automaticStartsAt]);
 
   const getScopeOutput = (domain: string): string => {
       if (!subdomains[domain]) return '';
@@ -1259,22 +1256,27 @@ function App() {
                   {subdomains[selectedDomain] && subdomains[selectedDomain].length > 0 && (
                     <div className="analysis-action-group" aria-label="Hedef analiz işlemleri">
                       <button
-                        className={`btn btn-secondary analysis-action ${serviceScanRunning ? 'is-cancel' : ''}`}
+                        className={`btn btn-secondary analysis-action ${serviceScanRunning ? 'is-cancel is-running' : ''}`}
+                        aria-busy={serviceScanRunning}
                         onClick={handleAnalyzeAll}
                         disabled={activeRun?.running}
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
                         {serviceScanRunning
                           ? `Taramayı iptal et (${activeServiceRun?.completed || 0}/${activeServiceRun?.total || 0})`
-                          : 'Servisleri tara'}
+                          : automaticStage === 'waiting-services' && automaticStartsAt !== undefined
+                            ? `Servisleri tara (${autoCountdown} sn)` : 'Servisleri tara'}
                       </button>
                       <button
-                        className="btn btn-advanced analysis-action"
+                        className={`btn btn-advanced analysis-action ${activeRun?.running ? 'is-running' : ''}`}
+                        aria-busy={Boolean(activeRun?.running)}
                         onClick={handleAdvancedAnalysis}
                         disabled={activeRun?.running || serviceScanRunning}
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
-                        {activeRun?.running ? 'Analiz sürüyor' : 'Tam kapsamlı analiz'}
+                        {activeRun?.running ? 'Analiz sürüyor' :
+                          automaticStage === 'waiting-advanced' && automaticStartsAt !== undefined
+                            ? `Tam kapsamlı analiz (${autoCountdown} sn)` : 'Tam kapsamlı analiz'}
                       </button>
                       <button
                         className="btn btn-secondary analysis-action"
@@ -1299,6 +1301,11 @@ function App() {
                 </div>
               </div>
 
+              {selectedSubdomainsReady && (automaticStage === 'waiting-services' || automaticStage === 'waiting-advanced') && (
+                <p className="auto-analysis-status" role="status">
+                  {automaticStage === 'waiting-services' ? 'Servis taraması' : 'Tam kapsamlı analiz'} {autoCountdown} saniye sonra otomatik başlayacak.
+                </p>
+              )}
               {(activeMeta || activeRun || activeServiceRun) && (
                 <section className="intel-strip" aria-live="polite">
                   <div className="intel-stat"><span>Kaynaklar</span><strong>{healthySources}<small>/{activeMeta?.sources.length || 0}</small></strong></div>
@@ -1327,16 +1334,19 @@ function App() {
                   <div className="loading-state">
                     {wakingUp[selectedDomain] ? (
                         <div className="wakeup-container">
-                            <div className="wakeup-visual" role="img" aria-label={`Bilgi toplama sistemi hazırlanıyor: yüzde ${wakeUpProgress[selectedDomain] ?? 0}`}>
-                                <svg className="wakeup-ring" viewBox="0 0 100 100" aria-hidden="true">
-                                    <circle className="wakeup-ring-track" cx="50" cy="50" r="44" />
-                                    <circle className="wakeup-ring-progress" cx="50" cy="50" r="44" />
-                                </svg>
-                                <span className="wakeup-magnifier" aria-hidden="true">
-                                  <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" /></svg>
-                                </span>
+                            <div className="wakeup-radar" role="img" aria-label="Sistem hazırlanıyor; radar animasyonu">
+                                <div className="radar-grid" aria-hidden="true">
+                                    <span className="radar-ring radar-ring-inner" />
+                                    <span className="radar-ring radar-ring-middle" />
+                                    <span className="radar-axis radar-axis-horizontal" />
+                                    <span className="radar-axis radar-axis-vertical" />
+                                    <span className="radar-sweep" />
+                                    <span className="radar-dot radar-dot-one" />
+                                    <span className="radar-dot radar-dot-two" />
+                                    <span className="radar-dot radar-dot-three" />
+                                </div>
+                                <span className="radar-domain">{selectedDomain}</span>
                             </div>
-                            <strong className="wakeup-progress-count">%{wakeUpProgress[selectedDomain] ?? 0}</strong>
                             <h4>Bilgi toplama sistemi hazırlanıyor</h4>
                         </div>
                     ) : (
