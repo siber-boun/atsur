@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useEffectEvent, useRef } from 'react';
 import './index.css';
 
 type Step = 'login' | 'dashboard';
@@ -395,6 +395,19 @@ function App() {
   const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
   const [scopeVisibleForDomain, setScopeVisibleForDomain] = useState<string | null>(null);
   const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
+  const advancedBusyRef = useRef(new Set<string>());
+  const autoAnalysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [autoAnalysis, setAutoAnalysis] = useState<{
+    domain: string;
+    stage: 'waiting-services' | 'services' | 'waiting-advanced' | 'done';
+  } | null>(null);
+
+  const clearAutoAnalysisTimer = () => {
+    if (autoAnalysisTimerRef.current !== null) {
+      clearTimeout(autoAnalysisTimerRef.current);
+      autoAnalysisTimerRef.current = null;
+    }
+  };
   
   const isLoginValid = email.trim().length > 0 && password.length > 0;
   
@@ -477,6 +490,8 @@ function App() {
   };
 
   const handleLogout = () => {
+    clearAutoAnalysisTimer();
+    setAutoAnalysis(null);
     serviceAbortRef.current?.controller.abort();
     serviceAbortRef.current = null;
     sessionStorage.removeItem(SESSION_KEY);
@@ -505,6 +520,8 @@ function App() {
     setSubdomains(newSubdomains);
     
     if (selectedDomain === domainToDelete) {
+      clearAutoAnalysisTimer();
+      setAutoAnalysis(null);
       setSelectedDomain(null);
     }
     
@@ -594,6 +611,12 @@ function App() {
   };
 
   const handleDomainClick = (domain: string) => {
+    clearAutoAnalysisTimer();
+    setAutoAnalysis({
+      domain,
+      stage: advancedBusyRef.current.has(domain) ? 'done' :
+        serviceAbortRef.current?.domain === domain ? 'services' : 'waiting-services'
+    });
     setSelectedDomain(domain);
     setScopeVisibleForDomain(null);
     fetchSubdomains(domain);
@@ -688,11 +711,15 @@ function App() {
   const handleAnalyzeAll = async () => {
       if (!selectedDomain || !subdomains[selectedDomain]) return;
       const domain = selectedDomain;
-      if (serviceRuns[domain]?.running) {
+      if (advancedBusyRef.current.has(domain)) return;
+      clearAutoAnalysisTimer();
+      if (serviceAbortRef.current?.domain === domain) {
+        setAutoAnalysis({ domain, stage: 'done' });
         serviceAbortRef.current?.controller.abort();
         return;
       }
 
+      setAutoAnalysis({ domain, stage: 'services' });
       serviceAbortRef.current?.controller.abort();
       const controller = new AbortController();
       serviceAbortRef.current = { domain, controller };
@@ -762,7 +789,10 @@ function App() {
   const handleAdvancedAnalysis = async () => {
       if (!selectedDomain) return;
       const domain = selectedDomain;
-      if (advancedRuns[domain]?.running) return;
+      if (advancedBusyRef.current.has(domain) || serviceAbortRef.current?.domain === domain) return;
+      clearAutoAnalysisTimer();
+      setAutoAnalysis({ domain, stage: 'done' });
+      advancedBusyRef.current.add(domain);
       setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Pasif kaynaklar ve DNS doğrulanıyor', completed: 0, total: 0 } }));
 
       try {
@@ -834,8 +864,53 @@ function App() {
       } catch (err) {
           const message = err instanceof Error ? err.message : 'Gelişmiş analiz tamamlanamadı';
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz durdu', completed: 0, total: 0, error: message } }));
+      } finally {
+          advancedBusyRef.current.delete(domain);
       }
   };
+
+  // Effect Events keep delayed actions on the latest selected domain and results.
+  const startAutomaticAnalysis = useEffectEvent((stage: 'waiting-services' | 'waiting-advanced') => {
+    if (!selectedDomain || autoAnalysis?.domain !== selectedDomain || autoAnalysis.stage !== stage) return;
+    if (advancedBusyRef.current.has(selectedDomain) || serviceAbortRef.current?.domain === selectedDomain) return;
+    if (stage === 'waiting-services') void handleAnalyzeAll();
+    else void handleAdvancedAnalysis();
+  });
+
+  const selectedSubdomainsReady = Boolean(selectedDomain && subdomains[selectedDomain]?.length &&
+    !loading[selectedDomain] && !error[selectedDomain]);
+  const selectedServiceRun = selectedDomain ? serviceRuns[selectedDomain] : undefined;
+  const selectedAdvancedRunning = Boolean(selectedDomain && advancedRuns[selectedDomain]?.running);
+
+  useEffect(() => {
+    if (step !== 'dashboard' || !userDataReady || !selectedDomain ||
+      autoAnalysis?.domain !== selectedDomain || autoAnalysis.stage === 'done') return;
+
+    if (selectedAdvancedRunning) {
+      setAutoAnalysis({ domain: selectedDomain, stage: 'done' });
+      return;
+    }
+    if (autoAnalysis.stage === 'services') {
+      if (!selectedServiceRun?.running && selectedServiceRun?.stage === 'Servis taraması tamamlandı') {
+        setAutoAnalysis({ domain: selectedDomain, stage: 'waiting-advanced' });
+      } else if (!selectedServiceRun?.running && selectedServiceRun?.stage === 'Servis taraması iptal edildi') {
+        setAutoAnalysis({ domain: selectedDomain, stage: 'done' });
+      }
+      return;
+    }
+    if (!selectedSubdomainsReady || selectedServiceRun?.running) return;
+
+    const stage = autoAnalysis.stage;
+    const timer = setTimeout(() => {
+      autoAnalysisTimerRef.current = null;
+      startAutomaticAnalysis(stage);
+    }, 5000);
+    autoAnalysisTimerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (autoAnalysisTimerRef.current === timer) autoAnalysisTimerRef.current = null;
+    };
+  }, [step, userDataReady, selectedDomain, autoAnalysis, selectedSubdomainsReady, selectedServiceRun, selectedAdvancedRunning]);
 
   const getScopeOutput = (domain: string): string => {
       if (!subdomains[domain]) return '';
@@ -1542,8 +1617,8 @@ function App() {
                                                         <td className="col-missing">
                                                             {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.security?.missing ? (
                                                                 <div className="missing-list-inline">
-                                                                    {detail.security.missing.map((m: string, mIdx: number) => (
-                                                                        <span key={mIdx} className="missing-tag">{m}</span>
+                                                                    {[...new Set(detail.security.missing as string[])].map((missingHeader) => (
+                                                                        <span key={missingHeader} className="missing-tag">{missingHeader}</span>
                                                                     ))}
                                                                 </div>
                                                             ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
