@@ -760,7 +760,7 @@ function App() {
           ...prev,
           [domain]: {
             running: false,
-            stage: cancelled ? 'Servis taraması iptal edildi' : 'Servis taraması tamamlandı',
+            stage: cancelled ? 'Servis taraması iptal edildi' : 'Servis Taraması Tamamlandı',
             completed,
             total: targets.length,
             failed,
@@ -859,7 +859,7 @@ function App() {
           };
           await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()));
           await emailPromise;
-          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz tamamlandı', completed: targets.length, total: targets.length } }));
+          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Kapsamlı Analiz Tamamlandı', completed: targets.length, total: targets.length } }));
       } catch (err) {
           const message = err instanceof Error ? err.message : 'Gelişmiş analiz tamamlanamadı';
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz durdu', completed: 0, total: 0, error: message } }));
@@ -1317,7 +1317,9 @@ function App() {
                       ? activeRun.stage
                       : activeServiceRun?.running
                         ? activeServiceRun.stage
-                        : activeRun?.stage || activeServiceRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
+                        : automaticStage === 'waiting-advanced'
+                          ? activeServiceRun?.stage
+                          : activeRun?.stage || activeServiceRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
                     {activeRun?.running && activeRun.total > 0 ? <strong>{activeRun.completed}/{activeRun.total}</strong> :
                       activeServiceRun?.running && activeServiceRun.total > 0 ? <strong>{activeServiceRun.completed}/{activeServiceRun.total}</strong> : null}
                     <div className="signal-track"><i style={{ width: activeRun?.running && activeRun.total
