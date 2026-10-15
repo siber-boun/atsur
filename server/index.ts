@@ -12,8 +12,6 @@ import validateRoute from './routes/validate';
 import wildcardRoute from './routes/wildcard';
 import sourcesRoute from './routes/sources';
 import bruteRoute from './routes/brute';
-import authRoute from './routes/auth';
-import { requireAuthentication } from './lib/auth';
 
 const app = express();
 let inFlight = 0;
@@ -25,8 +23,7 @@ app.use(cors({ origin(origin, callback) {
   callback(null, !origin || allowedOrigins.has(origin));
 } }));
 app.use(express.json());
-app.use(authRoute);
-app.use(requireAuthentication);
+// Demo build: API authentication is intentionally deferred. Frontend login is local-only.
 app.use((req, res, next) => {
   if (req.path === '/health') {
     res.locals.inFlight = inFlight;

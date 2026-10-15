@@ -277,8 +277,16 @@ interface UserData {
   emailSecCache: Record<string, EmailSecurityInfo>;
 }
 
-const ACCESS_TOKEN_KEY = 'osint_access_token';
-const SESSION_KEY = ACCESS_TOKEN_KEY;
+const DEMO_PASSWORD_HASH_KEY = 'osint_demo_password_sha256';
+const DEMO_PASSWORD_HASH_SEED = 'afd859d6addc81ad5c3cfe3cbed53a5ed0ae3776d7528ec1df705bf2c72a81cb';
+const DEMO_EMAIL = 'banusencer@yahoo.com';
+const SESSION_KEY = 'osint_demo_session';
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
 
 function readStoredUsers(): Record<string, UserData> {
   try {
@@ -316,8 +324,6 @@ async function fetchJsonWithTimeout<T>(
 
   try {
     const headers = new Headers(init.headers);
-    const accessToken = sessionStorage.getItem(ACCESS_TOKEN_KEY);
-    if (accessToken && !url.endsWith('/api/auth/login')) headers.set('Authorization', `Bearer ${accessToken}`);
     const response = await fetch(url, { ...init, headers, signal: controller.signal });
     if (!response.ok) throw new Error(`API isteği başarısız (${response.status})`);
     return await response.json() as T;
@@ -376,12 +382,13 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://osint-zgg4.onrende
 function App() {
   const hasStoredSession = Boolean(sessionStorage.getItem(SESSION_KEY));
   const [step, setStep] = useState<Step>(hasStoredSession ? 'dashboard' : 'login');
+  const [demoPasswordHash] = useState(DEMO_PASSWORD_HASH_SEED);
   
   // Auth states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(() => sessionStorage.getItem(SESSION_KEY));
   const [userDataReady, setUserDataReady] = useState(false);
   
   // Dashboard states
@@ -423,25 +430,11 @@ function App() {
   const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
   const isDomainValid = domainRegex.test(domainInput);
 
-  // Load user data on login
+  // Demo login is intentionally local. The visible SHA-256 value is not a security boundary.
   useEffect(() => {
-    if (!sessionStorage.getItem(ACCESS_TOKEN_KEY)) {
-      setStep('login');
-      return;
-    }
-    let active = true;
-    void fetchJsonWithTimeout<{ email: string }>(`${API_BASE_URL}/api/auth/session`, {}, 8000)
-      .then(session => {
-        if (!active) return;
-        setLoggedInUser(session.email);
-        setStep('dashboard');
-      })
-      .catch(() => {
-        if (!active) return;
-        sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-        setStep('login');
-      });
-    return () => { active = false; };
+    // Keep this trial build aligned with the requested legacy password if an older hash was saved.
+    localStorage.setItem(DEMO_PASSWORD_HASH_KEY, DEMO_PASSWORD_HASH_SEED);
+    setStep(sessionStorage.getItem(SESSION_KEY) ? 'dashboard' : 'login');
   }, []);
 
   useEffect(() => {
@@ -496,19 +489,22 @@ function App() {
     e.preventDefault();
     setAuthError('');
     try {
-      const session = await fetchJsonWithTimeout<{ token: string; email: string }>(`${API_BASE_URL}/api/auth/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      }, 10000);
-      sessionStorage.setItem(ACCESS_TOKEN_KEY, session.token);
+      const savedHash = DEMO_PASSWORD_HASH_SEED;
+      localStorage.setItem(DEMO_PASSWORD_HASH_KEY, savedHash);
+      const enteredHash = await sha256Hex(password);
+      if (email.trim().toLowerCase() !== DEMO_EMAIL || enteredHash !== savedHash) {
+        setAuthError('Giriş başarısız. E-posta veya parola hatalı.');
+        return;
+      }
+      sessionStorage.setItem(SESSION_KEY, DEMO_EMAIL);
       const users = readStoredUsers();
-      if (!users[session.email]) users[session.email] = { domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
+      if (!users[DEMO_EMAIL]) users[DEMO_EMAIL] = { domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
       localStorage.setItem('osint_users', JSON.stringify(users));
       setPassword('');
-      setLoggedInUser(session.email);
+      setLoggedInUser(DEMO_EMAIL);
       setStep('dashboard');
     } catch {
-      setAuthError('Giriş başarısız. E-posta, şifre veya sunucu bağlantısını kontrol edin.');
+      setAuthError('Yerel parola özeti oluşturulamadı. Tarayıcıyı yenileyip tekrar deneyin.');
     }
   };
 
@@ -519,11 +515,7 @@ function App() {
     serviceAbortRef.current = null;
     for (const controller of advancedAbortRef.current.values()) controller.abort();
     advancedAbortRef.current.clear();
-    const accessToken = sessionStorage.getItem(ACCESS_TOKEN_KEY);
-    if (accessToken) {
-      void fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, keepalive: true }).catch(() => undefined);
-    }
-    sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
     setLoggedInUser(null);
     setEmail('');
     setPassword('');
@@ -1171,7 +1163,7 @@ function App() {
           </div>
           <div className="header">
             <h1>BUSIBER OSINT</h1>
-            <p>Yetkili kullanıcı hesabıyla sisteme giriş yapın</p>
+            <p>Deneme sürümü · yerel giriş</p>
           </div>
           
           {authError && (
@@ -1200,7 +1192,7 @@ function App() {
                 type="password" 
                 id="password" 
                 className="form-input" 
-                placeholder="•••••••• (Min 6 karakter)"
+                placeholder="Parolanızı girin"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -1211,6 +1203,10 @@ function App() {
               Giriş Yap
             </button>
           </form>
+          <div className="demo-hash" style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'rgba(100, 116, 139, 0.12)', fontSize: 12 }}>
+            <div style={{ marginBottom: 6 }}>Yerel parola hash’i (SHA-256)</div>
+            <code style={{ display: 'block', overflowWrap: 'anywhere', userSelect: 'all' }}>{demoPasswordHash}</code>
+          </div>
         </div>
       </div>
     );
