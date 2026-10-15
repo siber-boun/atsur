@@ -385,7 +385,7 @@ function App() {
   const [demoPasswordHash] = useState(DEMO_PASSWORD_HASH_SEED);
   
   // Auth states
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(DEMO_EMAIL);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [loggedInUser, setLoggedInUser] = useState<string | null>(() => sessionStorage.getItem(SESSION_KEY));
@@ -517,7 +517,7 @@ function App() {
     advancedAbortRef.current.clear();
     sessionStorage.removeItem(SESSION_KEY);
     setLoggedInUser(null);
-    setEmail('');
+    setEmail(DEMO_EMAIL);
     setPassword('');
     setStep('login');
   };
@@ -1174,12 +1174,12 @@ function App() {
           
           <form onSubmit={handleLogin}>
             <div className="form-group">
-              <label htmlFor="email">E-posta Adresi</label>
+              <label htmlFor="email">Deneme hesabı e-posta adresi</label>
               <input 
                 type="email" 
                 id="email" 
                 className="form-input" 
-                placeholder="isim@sirket.com"
+                placeholder={DEMO_EMAIL}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
