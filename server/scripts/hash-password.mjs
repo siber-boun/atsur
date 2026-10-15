@@ -37,8 +37,12 @@ function readHiddenPassword() {
 }
 
 try {
+  const legacyPassword = process.argv.includes('--legacy');
+  const minimumLength = legacyPassword ? 8 : 12;
   const password = await readHiddenPassword();
-  if (password.length < 12) throw new Error('Parola en az 12 karakter olmalı.');
+  if (password.length < minimumLength) {
+    throw new Error(`Parola en az ${minimumLength} karakter olmalı${legacyPassword ? ' (eski parolayı taşımak için)' : ''}.`);
+  }
   const salt = randomBytes(16);
   const digest = scryptSync(password, salt, 64);
   stdout.write(`OSINT_LOGIN_PASSWORD_HASH=scrypt$${salt.toString('base64url')}$${digest.toString('base64url')}\n`);

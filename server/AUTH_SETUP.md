@@ -9,6 +9,8 @@ Set these values in the Render service environment before deploying:
 
 After deploying the backend, deploy the frontend. The browser holds a two-hour signed bearer token in `sessionStorage`; logout revokes it for this backend process. Login attempts are limited to 10 per IP per 15 minutes. A Render restart invalidates revoked-token entries; all other tokens still expire within two hours.
 
+To carry forward the former eight-character password, run `node scripts/hash-password.mjs --legacy` and type it into the hidden prompt. Set the printed `OSINT_LOGIN_PASSWORD_HASH` and the original `OSINT_LOGIN_EMAIL` in Render, then redeploy the backend. The normal mode keeps the 12-character minimum for new passwords.
+
 Authenticated API calls default to 600 requests per user per 15 minutes. Tune with `USER_API_REQUESTS` and `USER_API_WINDOW_MS` if the expected scan volume needs a different budget.
 
 All `/api/*` routes except `/api/auth/login` require authentication. `/health` remains available for Render health checks. The frontend no longer contains a shared password. Existing local scan caches stay associated with the email returned by the backend.
