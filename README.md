@@ -33,4 +33,4 @@ npm install && npm run dev       # Frontend -> http://localhost:5173
 cd server && npm install && npm start   # Backend -> http://localhost:3001
 ```
 
-> **Not:** `vite.config.ts`, `/api` isteklerini `localhost:3001`'e proxy'ler; bu proxy yalnızca `.env`'deki `VITE_API_URL` boşken devreye girer. Lokal backend'i test etmek için o satırı yorumlayın.
+> **Not:** Yayında tarayıcı aynı adresteki `/api` yoluna bağlanır; Worker istekleri sabit Render API'sine aktarır. Böylece tarayıcıda adresler arası CORS bağlantısı gerekmez. Geliştirmede `VITE_API_URL` boşken Vite istekleri `localhost:3001`'e proxy'ler; bu değişkenle farklı bir yerel API adresi seçilebilir.

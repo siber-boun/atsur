@@ -374,10 +374,8 @@ function AnalysisWaitIndicator() {
   );
 }
 
-// API Base URL - Local'de /api (Vite proxy üzerinden), Canlıda Render URL'si
-// Workers dağıtımında VITE_API_URL tanımlı değilse göreli /api isteği statik
-// arayüzün kendisine gider. Canlı Render backend'i güvenli varsayılandır.
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://osint-zgg4.onrender.com';
+// Same-origin /api: Vite proxies locally; the production Worker forwards to Render.
+const API_BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || '');
 
 function App() {
   const hasStoredSession = Boolean(sessionStorage.getItem(SESSION_KEY));
