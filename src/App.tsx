@@ -600,7 +600,26 @@ function App() {
     }, 3000);
     
     try {
-      const raw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}`, {}, 60000);
+      const scanUrl = `${API_BASE_URL}/api/scan?domain=${encodeURIComponent(domain)}`;
+      let raw: any;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          raw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000);
+          lastError = undefined;
+          break;
+        } catch (scanError) {
+          lastError = scanError;
+          const status = scanError instanceof Error ? Number(scanError.message.match(/\((\d{3})\)/)?.[1]) : 0;
+          const transient = scanError instanceof TypeError ||
+            (scanError instanceof DOMException && scanError.name === 'AbortError') ||
+            status === 429 || status >= 500;
+          if (!transient || attempt === 2) throw scanError;
+          setWakingUp(prev => ({ ...prev, [domain]: true }));
+          await new Promise(resolve => window.setTimeout(resolve, 1500 * (attempt + 1)));
+        }
+      }
+      if (lastError) throw lastError;
       clearTimeout(wakeUpTimer);
 
       // Faz 5'ten itibaren backend tarama metadatasıyla birlikte bir nesne döner;
@@ -620,7 +639,20 @@ function App() {
       
     } catch (err: any) {
       clearTimeout(wakeUpTimer);
-      setError(prev => ({ ...prev, [domain]: 'Subdomainler alınırken bir hata oluştu veya servise geçici olarak ulaşılamıyor.' }));
+      const message = err instanceof Error ? err.message : '';
+      const status = Number(message.match(/\((\d{3})\)/)?.[1]);
+      const cachedCount = subdomains[domain]?.length || 0;
+      const failureMessage = status === 401
+        ? 'Tarama sunucusu hâlâ oturum istiyor (HTTP 401). Backend güncellemesi henüz yayına alınmamış olabilir.'
+        : status === 403
+          ? 'Tarama sunucusu isteği engelledi (HTTP 403). Sunucu erişim/CORS ayarlarını kontrol edin.'
+          : err instanceof TypeError
+            ? 'Tarama servisine bağlanılamadı (ağ veya CORS hatası). Otomatik yeniden denemeler başarısız oldu.'
+            : status
+              ? `Alt domain taraması başarısız oldu (HTTP ${status}). Tekrar deneyebilirsiniz.`
+              : 'Alt domain taraması tamamlanamadı. Tekrar deneyebilirsiniz.';
+      // A refresh failure should not discard or block analysis of already saved discoveries.
+      setError(prev => ({ ...prev, [domain]: cachedCount ? '' : failureMessage }));
     } finally {
       clearTimeout(wakeUpTimer);
       setLoading(prev => ({ ...prev, [domain]: false }));
