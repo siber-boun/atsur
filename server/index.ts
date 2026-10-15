@@ -16,8 +16,11 @@ import bruteRoute from './routes/brute';
 const app = express();
 let inFlight = 0;
 
-const allowedOrigins = new Set((process.env.CORS_ALLOWED_ORIGINS || 'https://osint-2pq.pages.dev,http://localhost:5173,http://127.0.0.1:5173')
-  .split(',').map((origin) => origin.trim()).filter(Boolean));
+const allowedOrigins = new Set([
+  'https://osint.busiber.workers.dev',
+  ...(process.env.CORS_ALLOWED_ORIGINS || 'https://osint-2pq.pages.dev,http://localhost:5173,http://127.0.0.1:5173')
+    .split(',').map((origin) => origin.trim()).filter(Boolean)
+]);
 app.set('trust proxy', 1);
 app.use(cors({ origin(origin, callback) {
   callback(null, !origin || allowedOrigins.has(origin));

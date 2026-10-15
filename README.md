@@ -2,7 +2,7 @@
 
 Bu proje, hedef bir şirketin alan adı üzerinden pasif subdomain taraması yapan ve bulunan subdomain'lerde çalışan web servislerini analiz eden bir Açık Kaynak İstihbarat (OSINT) platformudur.
 
-🚀 **Canlı Uygulama:** [https://osint-2pq.pages.dev/](https://osint-2pq.pages.dev/)
+🚀 **Canlı Uygulama:** [BUSIBER OSINT](https://osint.busiber.workers.dev/)
 
 ## Özellikler
 
@@ -21,7 +21,7 @@ Bu proje, hedef bir şirketin alan adı üzerinden pasif subdomain taraması yap
 *   **Frontend:** React, TypeScript, Vite
 *   **Backend / API:** Node.js, Express.js
 *   **Hosting:**
-    *   Ön yüz **Cloudflare Pages** üzerinde barındırılmaktadır.
+    *   Ön yüz **Cloudflare Workers** üzerinde barındırılmaktadır.
     *   Arka yüz (Tarama motoru ve Proxy) **Render.com** üzerinde barındırılmaktadır.
 
 *Not: Render sunucuları 15 dakika boyunca kullanılmadığında uyku moduna geçer. Bu nedenle ilk tarama işlemi sırasında sunucunun uyanması ~40 saniye sürebilir.*
