@@ -276,6 +276,7 @@ interface UserData {
   subdomainsCache: Record<string, SubdomainData[]>;
   subdomainDetailsCache: Record<string, SubdomainDetail>;
   emailSecCache: Record<string, EmailSecurityInfo>;
+  scopes?: Record<string, string>;
 }
 
 const DEMO_PASSWORD_HASH_KEY = 'osint_demo_password_sha256';
@@ -403,8 +404,10 @@ function App() {
   const [scanMeta, setScanMeta] = useState<Record<string, ScanMeta>>({});
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
   const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
-  const [scopeVisibleForDomain, setScopeVisibleForDomain] = useState<string | null>(null);
+  const [generatedScopes, setGeneratedScopes] = useState<Record<string, string>>({});
   const [scopeReadyDomain, setScopeReadyDomain] = useState<string | null>(null);
+  const [scopeCopyMessage, setScopeCopyMessage] = useState('');
+  const notifiedScopeRunsRef = useRef(new Map<string, AdvancedRun>());
   const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
   const advancedAbortRef = useRef(new Map<string, AbortController>());
   const advancedBusyRef = useRef(new Set<string>());
@@ -458,6 +461,7 @@ function App() {
         Object.entries(cachedDetails).map(([subdomain, detail]) => [subdomain, normalizeCachedDetail(detail)])
       ));
       setEmailSecurity(userData.emailSecCache || {});
+      setGeneratedScopes(userData.scopes || {});
       setUserDataReady(true);
     } else {
       setDomains([]);
@@ -465,6 +469,7 @@ function App() {
       setSubdomains({});
       setSubdomainDetails({});
       setEmailSecurity({});
+      setGeneratedScopes({});
     }
   }, [loggedInUser]);
 
@@ -480,10 +485,11 @@ function App() {
           Object.entries(subdomainDetails).map(([subdomain, detail]) => [subdomain, normalizeCachedDetail(detail)])
         );
         users[loggedInUser].emailSecCache = emailSecurity;
+        users[loggedInUser].scopes = generatedScopes;
         localStorage.setItem('osint_users', JSON.stringify(users));
       }
     }
-  }, [domains, subdomains, subdomainDetails, emailSecurity, loggedInUser, userDataReady]);
+  }, [domains, subdomains, subdomainDetails, emailSecurity, generatedScopes, loggedInUser, userDataReady]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -510,7 +516,8 @@ function App() {
 
   const handleLogout = () => {
     setScopeReadyDomain(null);
-    setScopeVisibleForDomain(null);
+    notifiedScopeRunsRef.current.clear();
+    setAdvancedRuns({});
     clearAutoAnalysisTimer();
     setAutoAnalysis(null);
     serviceAbortRef.current?.controller.abort();
@@ -534,6 +541,8 @@ function App() {
 
   const handleDeleteDomain = (domainToDelete: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    setGeneratedScopes(prev => { const next = { ...prev }; delete next[domainToDelete]; return next; });
+    notifiedScopeRunsRef.current.delete(domainToDelete);
     
     const newDomains = domains.filter(d => d !== domainToDelete);
     setDomains(newDomains);
@@ -671,7 +680,7 @@ function App() {
         serviceAbortRef.current?.domain === domain ? 'services' : 'waiting-services'
     });
     setSelectedDomain(domain);
-    setScopeVisibleForDomain(null);
+    setScopeCopyMessage('');
     fetchSubdomains(domain);
   };
 
@@ -1076,8 +1085,6 @@ function App() {
               ...(failureMessages.length ? { error: failureMessages.join(' ') } : {})
             }
           }));
-          setScopeVisibleForDomain(domain);
-          setScopeReadyDomain(domain);
       } catch (err) {
           if (signal.aborted) {
             setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz iptal edildi', completed: 0, total: 0 } }));
@@ -1177,12 +1184,31 @@ function App() {
       return [...new Set(validSubdomains)].sort().join(', ');
   };
 
-  const scopeOutput = selectedDomain ? getScopeOutput(selectedDomain) : '';
+  const scopeOutput = selectedDomain ? (generatedScopes[selectedDomain] ?? getScopeOutput(selectedDomain)) : '';
 
   const handleGenerateScope = () => {
       if (!selectedDomain || !subdomains[selectedDomain]) return;
-      setScopeVisibleForDomain(selectedDomain);
+      const output = getScopeOutput(selectedDomain);
+      setGeneratedScopes(prev => ({ ...prev, [selectedDomain]: output }));
   };
+
+  const createCompletedScope = useEffectEvent((domain: string) => {
+    // Read committed results rather than the state captured when analysis began.
+    const output = getScopeOutput(domain);
+    setScopeCopyMessage('');
+    setGeneratedScopes(prev => ({ ...prev, [domain]: output }));
+    setScopeReadyDomain(domain);
+  });
+
+  useEffect(() => {
+    if (step !== 'dashboard' || !userDataReady) return;
+    for (const [domain, run] of Object.entries(advancedRuns)) {
+      if (run.running || run.stage !== 'Kapsamlı Analiz Tamamlandı' ||
+        notifiedScopeRunsRef.current.get(domain) === run) continue;
+      notifiedScopeRunsRef.current.set(domain, run);
+      createCompletedScope(domain);
+    }
+  }, [advancedRuns, step, userDataReady]);
 
   if (new URLSearchParams(window.location.search).get('view') === 'design-process') {
     return <DesignProcessView />;
@@ -1294,7 +1320,7 @@ function App() {
     <div className="dashboard-layout fade-in">
       {scopeReadyDomain && (
         <ScopeReadyDialog domain={scopeReadyDomain}
-          targetCount={getScopeOutput(scopeReadyDomain).split(', ').filter(Boolean).length}
+          targetCount={(generatedScopes[scopeReadyDomain] || '').split(', ').filter(Boolean).length}
           onDismiss={() => setScopeReadyDomain(null)} />
       )}
       <header className="topbar">
@@ -1615,6 +1641,22 @@ function App() {
               )}
               
               <div className="results-content">
+                {generatedScopes[selectedDomain] !== undefined && (
+                  <section className="scope-output-box fade-in" aria-labelledby="generated-scope-title">
+                    <div className="scope-header">
+                      <h4 id="generated-scope-title">Geçerli OSINT Kapsamı</h4>
+                      <button className="btn-text btn-small" onClick={() => {
+                        void navigator.clipboard.writeText(scopeOutput)
+                          .then(() => setScopeCopyMessage('Kapsam kopyalandı.'))
+                          .catch(() => setScopeCopyMessage('Kopyalanamadı; metni seçerek kopyalayabilirsiniz.'));
+                      }}>Kopyala</button>
+                    </div>
+                    <p className="scope-desc">Aktif web servisi doğrulanan hedefler. Kapsam bu alan adı için otomatik kaydedilir.</p>
+                    <textarea aria-label="Oluşturulan OSINT kapsamı" className="form-input scope-textarea" readOnly
+                      value={scopeOutput} placeholder="Erişilebilir web servisi bulunamadığı için kapsam boş." />
+                    {scopeCopyMessage && <p role="status" className="scope-desc">{scopeCopyMessage}</p>}
+                  </section>
+                )}
                 {loading[selectedDomain] ? (
                   <div className="loading-state">
                     {wakingUp[selectedDomain] ? (
@@ -1947,21 +1989,6 @@ function App() {
                           </section>
                         )}
 
-                        {scopeVisibleForDomain === selectedDomain && (
-                            <div className="scope-output-box fade-in">
-                                <div className="scope-header">
-                                    <h4>Geçerli OSINT Kapsamı</h4>
-                                    <button className="btn-text btn-small" onClick={() => { navigator.clipboard.writeText(scopeOutput); alert('Kopyalandı!'); }}>Kopyala</button>
-                                </div>
-                                <p className="scope-desc">Sadece port taraması yapılmış ve aktif web servisi tespit edilmiş olan (Mail ve DNS sunucuları hariç) adresler.</p>
-                                <textarea 
-                                    className="form-input scope-textarea" 
-                                    readOnly 
-                                    value={scopeOutput}
-                                    placeholder="Henüz aktif web servisi tespit edilen bir adres yok. Lütfen listedeki adresleri analiz edin."
-                                />
-                            </div>
-                        )}
                     </div>
                   </>
                 ) : (

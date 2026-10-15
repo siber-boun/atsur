@@ -37,3 +37,5 @@ The final `:root` parity layer in `src/index.css` is the canonical token source.
 `src/components/ScopeReadyDialog.tsx` owns scope-completion feedback. Its styled native dialog uses modal focus, an inert background, Escape dismissal, a visible focused button, and a width bounded by the viewport. The scope remains available after dismissal. The dialog identifies the domain and distinguishes a populated scope from an empty one.
 
 Automatic scope generation uses the existing active web-service criteria in `getScopeOutput`. Completed analyses produce a dialog; cancelled or stopped analyses do not. Keep partial scan failures visible in the underlying result summary. Do not introduce decorative motion for this completion notification.
+
+Generate the scope from committed final scan results and store it per domain in the user's local cache. Display saved scopes before result rows, including empty scopes. Reselecting a domain or reloading the page must preserve its scope without requiring the manual generation button; restoring a saved scope does not replay completion notifications.
