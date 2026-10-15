@@ -1,5 +1,6 @@
 import { useState, useEffect, useEffectEvent, useRef } from 'react';
 import './index.css';
+import { ScopeReadyDialog } from './components/ScopeReadyDialog';
 
 type Step = 'login' | 'dashboard';
 
@@ -403,6 +404,7 @@ function App() {
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
   const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
   const [scopeVisibleForDomain, setScopeVisibleForDomain] = useState<string | null>(null);
+  const [scopeReadyDomain, setScopeReadyDomain] = useState<string | null>(null);
   const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
   const advancedAbortRef = useRef(new Map<string, AbortController>());
   const advancedBusyRef = useRef(new Set<string>());
@@ -507,6 +509,8 @@ function App() {
   };
 
   const handleLogout = () => {
+    setScopeReadyDomain(null);
+    setScopeVisibleForDomain(null);
     clearAutoAnalysisTimer();
     setAutoAnalysis(null);
     serviceAbortRef.current?.controller.abort();
@@ -1072,6 +1076,8 @@ function App() {
               ...(failureMessages.length ? { error: failureMessages.join(' ') } : {})
             }
           }));
+          setScopeVisibleForDomain(domain);
+          setScopeReadyDomain(domain);
       } catch (err) {
           if (signal.aborted) {
             setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz iptal edildi', completed: 0, total: 0 } }));
@@ -1286,6 +1292,11 @@ function App() {
   // Dashboard View
   return (
     <div className="dashboard-layout fade-in">
+      {scopeReadyDomain && (
+        <ScopeReadyDialog domain={scopeReadyDomain}
+          targetCount={getScopeOutput(scopeReadyDomain).split(', ').filter(Boolean).length}
+          onDismiss={() => setScopeReadyDomain(null)} />
+      )}
       <header className="topbar">
         <div className="console-brand" aria-label="OSINT Core">
           <span className="console-mark" aria-hidden="true">

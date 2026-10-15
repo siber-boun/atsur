@@ -1,5 +1,26 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
+.scope-ready-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 28px;
+  color: var(--text-main);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-family: var(--mono);
+}
+.scope-ready-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.scope-ready-mark { display: block; margin-bottom: 14px; color: var(--primary-color); font-size: 28px; }
+.scope-ready-dialog h2 { margin-bottom: 12px; font-size: 20px; }
+.scope-ready-dialog p { margin-bottom: 24px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.scope-ready-dialog .btn { min-height: 40px; }
+.scope-ready-dialog .btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 4px; }
+
 :root {
   --primary-color: #2563eb;
   --primary-hover: #1d4ed8;
