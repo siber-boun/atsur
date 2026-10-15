@@ -840,9 +840,34 @@ function App() {
       advancedBusyRef.current.add(domain);
       setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Pasif kaynaklar ve DNS doğrulanıyor', completed: 0, total: 0 } }));
       let targets: SubdomainData[] = [];
+      let currentPhase = 'Pasif kaynaklar ve DNS doğrulama';
 
       try {
-          const scanRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}&validate=1`, {}, 60000, signal);
+          const scanUrl = `${API_BASE_URL}/api/scan?domain=${encodeURIComponent(domain)}&validate=1`;
+          let scanRaw: any;
+          try {
+            scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+          } catch (firstError) {
+            const transientFetchFailure = firstError instanceof TypeError ||
+              (firstError instanceof DOMException && firstError.name === 'AbortError');
+            if (signal.aborted || !transientFetchFailure) throw firstError;
+            currentPhase = 'Pasif kaynak bağlantısı yeniden deneniyor';
+            setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: 0 } }));
+            await new Promise<void>((resolve, reject) => {
+              const retryTimer = window.setTimeout(() => {
+                signal.removeEventListener('abort', abortRetry);
+                resolve();
+              }, 1500);
+              const abortRetry = () => {
+                window.clearTimeout(retryTimer);
+                reject(new DOMException('Analiz iptal edildi', 'AbortError'));
+              };
+              signal.addEventListener('abort', abortRetry, { once: true });
+            });
+            if (signal.aborted) return;
+            currentPhase = 'Pasif kaynaklar ve DNS doğrulama';
+            scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+          }
           if (signal.aborted) return;
           let discovered: SubdomainData[] = Array.isArray(scanRaw) ? scanRaw : (scanRaw.results || []);
           const meta: ScanMeta = {
@@ -851,7 +876,8 @@ function App() {
             truncatedValidation: Array.isArray(scanRaw) ? false : Boolean(scanRaw.truncatedValidation)
           };
 
-          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Wordlist ve permütasyon DNS taraması', completed: 0, total: 0 } }));
+          currentPhase = 'Wordlist ve permütasyon DNS taraması';
+          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: 0 } }));
           const seeds = discovered.filter(item => item.status === 'live').slice(0, 30).map(item => item.subdomain);
           try {
             const bruteRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/brute`, {
@@ -871,7 +897,8 @@ function App() {
           setSubdomains(prev => ({ ...prev, [domain]: discovered }));
           setScanMeta(prev => ({ ...prev, [domain]: meta }));
 
-          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'E-posta ve web güvenliği inceleniyor', completed: 0, total: discovered.length } }));
+          currentPhase = 'E-posta ve web güvenliği inceleniyor';
+          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: discovered.length } }));
           let emailFailed = false;
           const emailPromise = fetchJsonWithTimeout<EmailSecurityInfo>(`${API_BASE_URL}/api/email-sec?domain=${domain}`, {}, 12000, signal)
             .then(data => { if (!signal.aborted) setEmailSecurity(prev => ({ ...prev, [domain]: data })); })
@@ -885,7 +912,8 @@ function App() {
           targets = discovered.filter(item => item.status !== 'dead' && item.status !== 'private' && !item.wildcardMatch);
           const targetsNeedingPorts = targets.filter(item => !Array.isArray(subdomainDetails[item.subdomain]?.ports));
           if (targetsNeedingPorts.length) {
-            setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: 0, total: targetsNeedingPorts.length } }));
+            currentPhase = 'Yeni hedeflerde servisler kontrol ediliyor';
+            setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: targetsNeedingPorts.length } }));
             setServiceRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: 0, total: targetsNeedingPorts.length, failed: 0 } }));
             serviceAbortRef.current = { domain, controller };
             let serviceCursor = 0;
@@ -962,7 +990,8 @@ function App() {
               }
               if (signal.aborted) break;
               completed += 1;
-              setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'E-posta ve web güvenliği inceleniyor', completed, total: targets.length, failed } }));
+              currentPhase = 'E-posta ve web güvenliği inceleniyor';
+              setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed, total: targets.length, failed } }));
             }
           };
           await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()));
@@ -985,8 +1014,10 @@ function App() {
             setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz iptal edildi', completed: 0, total: 0 } }));
             return;
           }
-          const message = err instanceof Error ? err.message : 'Gelişmiş analiz tamamlanamadı';
-          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz durdu', completed: 0, total: 0, error: message } }));
+          const message = err instanceof TypeError && err.message === 'Failed to fetch'
+            ? 'Backend bağlantısı kurulamadı; ağ veya CORS kaynaklı olabilir.'
+            : err instanceof Error ? err.message : 'Gelişmiş analiz tamamlanamadı';
+          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: `Analiz durdu: ${currentPhase}`, completed: 0, total: 0, error: message } }));
       } finally {
           if (advancedAbortRef.current.get(domain) === controller) {
             if (signal.aborted) {
