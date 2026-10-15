@@ -12,12 +12,21 @@ import validateRoute from './routes/validate';
 import wildcardRoute from './routes/wildcard';
 import sourcesRoute from './routes/sources';
 import bruteRoute from './routes/brute';
+import authRoute from './routes/auth';
+import { requireAuthentication } from './lib/auth';
 
 const app = express();
 let inFlight = 0;
 
-app.use(cors());
+const allowedOrigins = new Set((process.env.CORS_ALLOWED_ORIGINS || 'https://osint-2pq.pages.dev,http://localhost:5173,http://127.0.0.1:5173')
+  .split(',').map((origin) => origin.trim()).filter(Boolean));
+app.set('trust proxy', 1);
+app.use(cors({ origin(origin, callback) {
+  callback(null, !origin || allowedOrigins.has(origin));
+} }));
 app.use(express.json());
+app.use(authRoute);
+app.use(requireAuthentication);
 app.use((req, res, next) => {
   if (req.path === '/health') {
     res.locals.inFlight = inFlight;

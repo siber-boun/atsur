@@ -274,9 +274,8 @@ interface UserData {
   emailSecCache: Record<string, EmailSecurityInfo>;
 }
 
-const SINGLE_USER_EMAIL = 'banusencer@yahoo.com';
-const SINGLE_USER_PASSWORD = 'Nmtd1881';
-const SESSION_KEY = 'osint_session';
+const ACCESS_TOKEN_KEY = 'osint_access_token';
+const SESSION_KEY = ACCESS_TOKEN_KEY;
 
 function readStoredUsers(): Record<string, UserData> {
   try {
@@ -313,7 +312,10 @@ async function fetchJsonWithTimeout<T>(
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const headers = new Headers(init.headers);
+    const accessToken = sessionStorage.getItem(ACCESS_TOKEN_KEY);
+    if (accessToken && !url.endsWith('/api/auth/login')) headers.set('Authorization', `Bearer ${accessToken}`);
+    const response = await fetch(url, { ...init, headers, signal: controller.signal });
     if (!response.ok) throw new Error(`API isteği başarısız (${response.status})`);
     return await response.json() as T;
   } finally {
@@ -369,14 +371,14 @@ function AnalysisWaitIndicator() {
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://osint-zgg4.onrender.com';
 
 function App() {
-  const hasStoredSession = sessionStorage.getItem(SESSION_KEY) === SINGLE_USER_EMAIL;
+  const hasStoredSession = Boolean(sessionStorage.getItem(SESSION_KEY));
   const [step, setStep] = useState<Step>(hasStoredSession ? 'dashboard' : 'login');
   
   // Auth states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(hasStoredSession ? SINGLE_USER_EMAIL : null);
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   const [userDataReady, setUserDataReady] = useState(false);
   
   // Dashboard states
@@ -418,6 +420,26 @@ function App() {
   const isDomainValid = domainRegex.test(domainInput);
 
   // Load user data on login
+  useEffect(() => {
+    if (!sessionStorage.getItem(ACCESS_TOKEN_KEY)) {
+      setStep('login');
+      return;
+    }
+    let active = true;
+    void fetchJsonWithTimeout<{ email: string }>(`${API_BASE_URL}/api/auth/session`, {}, 8000)
+      .then(session => {
+        if (!active) return;
+        setLoggedInUser(session.email);
+        setStep('dashboard');
+      })
+      .catch(() => {
+        if (!active) return;
+        sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+        setStep('login');
+      });
+    return () => { active = false; };
+  }, []);
+
   useEffect(() => {
     setUserDataReady(false);
     if (loggedInUser) {
@@ -466,29 +488,24 @@ function App() {
     }
   }, [domains, subdomains, subdomainDetails, emailSecurity, loggedInUser, userDataReady]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-
-    if (email.trim().toLowerCase() !== SINGLE_USER_EMAIL || password !== SINGLE_USER_PASSWORD) {
-      setAuthError('Hatalı e-posta veya şifre.');
-      return;
-    }
-
-    const users = readStoredUsers();
-    if (!users[SINGLE_USER_EMAIL]) {
-      users[SINGLE_USER_EMAIL] = {
-        domains: [],
-        subdomainsCache: {},
-        subdomainDetailsCache: {},
-        emailSecCache: {}
-      };
+    try {
+      const session = await fetchJsonWithTimeout<{ token: string; email: string }>(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      }, 10000);
+      sessionStorage.setItem(ACCESS_TOKEN_KEY, session.token);
+      const users = readStoredUsers();
+      if (!users[session.email]) users[session.email] = { domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
       localStorage.setItem('osint_users', JSON.stringify(users));
+      setPassword('');
+      setLoggedInUser(session.email);
+      setStep('dashboard');
+    } catch {
+      setAuthError('Giriş başarısız. E-posta, şifre veya sunucu bağlantısını kontrol edin.');
     }
-
-    sessionStorage.setItem(SESSION_KEY, SINGLE_USER_EMAIL);
-    setLoggedInUser(SINGLE_USER_EMAIL);
-    setStep('dashboard');
   };
 
   const handleLogout = () => {
@@ -496,7 +513,11 @@ function App() {
     setAutoAnalysis(null);
     serviceAbortRef.current?.controller.abort();
     serviceAbortRef.current = null;
-    sessionStorage.removeItem(SESSION_KEY);
+    const accessToken = sessionStorage.getItem(ACCESS_TOKEN_KEY);
+    if (accessToken) {
+      void fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, keepalive: true }).catch(() => undefined);
+    }
+    sessionStorage.removeItem(ACCESS_TOKEN_KEY);
     setLoggedInUser(null);
     setEmail('');
     setPassword('');
