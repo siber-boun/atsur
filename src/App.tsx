@@ -773,7 +773,17 @@ function App() {
       const worker = async () => {
         while (cursor < targets.length && !controller.signal.aborted) {
           const sub = targets[cursor++];
-          const ok = await handleAnalyzeSubdomain(sub, controller.signal);
+          let ok = false;
+          try {
+            ok = await handleAnalyzeSubdomain(sub, controller.signal);
+          } catch {
+            setSubdomainDetails(prev => ({
+              ...prev,
+              [sub]: { ...prev[sub], ip: null, ports: [], analyzing: false, techAnalyzing: false,
+                serviceError: 'Bu hedefte servis taraması yanıt vermedi; diğer hedefler taranmaya devam ediyor.' }
+            }));
+          }
+          if (controller.signal.aborted) break;
           completed += 1;
           if (!ok) failed += 1;
           setServiceRuns(prev => ({
@@ -798,12 +808,12 @@ function App() {
           ...prev,
           [domain]: {
             running: false,
-          stage: cancelled ? 'Servis taraması iptal edildi' : failed ? 'Servis Taraması Kısmen Tamamlandı' : 'Servis Taraması Tamamlandı',
+            stage: cancelled ? 'Servis taraması iptal edildi' : 'Servis Taraması Tamamlandı',
             completed,
             total: targets.length,
             failed,
             ...(cancelled ? { error: 'Tarama kullanıcı tarafından iptal edildi.' } :
-              failed ? { error: `${failed} hedef zaman aşımı veya API hatası nedeniyle tamamlanamadı.` } : {})
+              failed ? { error: `${failed} hedef yanıt vermedi; diğer hedefler tarandı.` } : {})
           }
         }));
         // Schedule the next step from actual completion, never from a progress render.
@@ -841,32 +851,49 @@ function App() {
       setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Pasif kaynaklar ve DNS doğrulanıyor', completed: 0, total: 0 } }));
       let targets: SubdomainData[] = [];
       let currentPhase = 'Pasif kaynaklar ve DNS doğrulama';
+      let discoveryFailure: string | undefined;
+      let bruteFailed = false;
+      let serviceFailures = 0;
 
       try {
           const scanUrl = `${API_BASE_URL}/api/scan?domain=${encodeURIComponent(domain)}&validate=1`;
           let scanRaw: any;
           try {
-            scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
-          } catch (firstError) {
-            const transientFetchFailure = firstError instanceof TypeError ||
-              (firstError instanceof DOMException && firstError.name === 'AbortError');
-            if (signal.aborted || !transientFetchFailure) throw firstError;
-            currentPhase = 'Pasif kaynak bağlantısı yeniden deneniyor';
-            setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: 0 } }));
-            await new Promise<void>((resolve, reject) => {
-              const retryTimer = window.setTimeout(() => {
-                signal.removeEventListener('abort', abortRetry);
-                resolve();
-              }, 1500);
-              const abortRetry = () => {
-                window.clearTimeout(retryTimer);
-                reject(new DOMException('Analiz iptal edildi', 'AbortError'));
-              };
-              signal.addEventListener('abort', abortRetry, { once: true });
-            });
+            try {
+              scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+            } catch (firstError) {
+              const transientFetchFailure = firstError instanceof TypeError ||
+                (firstError instanceof DOMException && firstError.name === 'AbortError');
+              if (signal.aborted || !transientFetchFailure) throw firstError;
+              currentPhase = 'Pasif kaynak bağlantısı yeniden deneniyor';
+              setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: 0 } }));
+              await new Promise<void>((resolve, reject) => {
+                const retryTimer = window.setTimeout(() => {
+                  signal.removeEventListener('abort', abortRetry);
+                  resolve();
+                }, 1500);
+                const abortRetry = () => {
+                  window.clearTimeout(retryTimer);
+                  reject(new DOMException('Analiz iptal edildi', 'AbortError'));
+                };
+                signal.addEventListener('abort', abortRetry, { once: true });
+              });
+              if (signal.aborted) return;
+              currentPhase = 'Pasif kaynaklar ve DNS doğrulama';
+              scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+            }
+            } catch (scanError) {
             if (signal.aborted) return;
-            currentPhase = 'Pasif kaynaklar ve DNS doğrulama';
-            scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+            // Oturum reddini bağlantı kesilmesi gibi ele alma; tekrar giriş gerekir.
+            if (scanError instanceof Error && /\(401\)/.test(scanError.message)) throw scanError;
+            const cachedResults = subdomains[domain] || [];
+            discoveryFailure = `Pasif keşif yanıt vermedi; kayıtlı ${cachedResults.length} alt domainle devam edildi.`;
+            scanRaw = {
+              results: cachedResults,
+              sources: scanMeta[domain]?.sources || [],
+              wildcard: scanMeta[domain]?.wildcard || { isWildcard: false, confidence: 'low', wildcardIps: [] },
+              truncatedValidation: scanMeta[domain]?.truncatedValidation || false
+            };
           }
           if (signal.aborted) return;
           let discovered: SubdomainData[] = Array.isArray(scanRaw) ? scanRaw : (scanRaw.results || []);
@@ -891,6 +918,7 @@ function App() {
           } catch {
             if (signal.aborted) return;
             meta.bruteSkipped = 'timeout';
+            bruteFailed = true;
           }
 
           if (signal.aborted) return;
@@ -914,21 +942,28 @@ function App() {
           if (targetsNeedingPorts.length) {
             currentPhase = 'Yeni hedeflerde servisler kontrol ediliyor';
             setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: targetsNeedingPorts.length } }));
-            setServiceRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: 0, total: targetsNeedingPorts.length, failed: 0 } }));
             serviceAbortRef.current = { domain, controller };
             let serviceCursor = 0;
             let serviceCompleted = 0;
-            let serviceFailed = 0;
             const serviceWorker = async () => {
               while (serviceCursor < targetsNeedingPorts.length && !signal.aborted) {
                 const item = targetsNeedingPorts[serviceCursor++];
-                const ok = await handleAnalyzeSubdomain(item.subdomain, signal);
+                let ok = false;
+                try {
+                  ok = await handleAnalyzeSubdomain(item.subdomain, signal);
+                } catch {
+                  setSubdomainDetails(prev => ({
+                    ...prev,
+                    [item.subdomain]: { ...prev[item.subdomain], ip: null, ports: [], analyzing: false, techAnalyzing: false,
+                      serviceError: 'Bu hedefte servis taraması yanıt vermedi; diğer hedefler taranmaya devam ediyor.' }
+                  }));
+                }
                 if (signal.aborted) break;
                 serviceCompleted += 1;
-                if (!ok) serviceFailed += 1;
-                setServiceRuns(prev => ({
+                if (!ok) serviceFailures += 1;
+                setAdvancedRuns(prev => ({
                   ...prev,
-                  [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: serviceCompleted, total: targetsNeedingPorts.length, failed: serviceFailed }
+                  [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: serviceCompleted, total: targetsNeedingPorts.length, failed: serviceFailures }
                 }));
               }
             };
@@ -942,8 +977,8 @@ function App() {
                 stage: 'Servis Taraması Tamamlandı',
                 completed: serviceCompleted,
                 total: targetsNeedingPorts.length,
-                failed: serviceFailed,
-                ...(serviceFailed ? { error: `${serviceFailed} yeni hedefte servis taraması tamamlanamadı.` } : {})
+                failed: serviceFailures,
+                ...(serviceFailures ? { error: `${serviceFailures} yeni hedef yanıt vermedi; diğer hedefler tarandı.` } : {})
               }
             }));
           }
@@ -997,16 +1032,22 @@ function App() {
           await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()));
           await emailPromise;
           if (signal.aborted) return;
-          const hasFailures = failed > 0 || emailFailed;
+          const failureMessages = [
+            discoveryFailure,
+            bruteFailed ? 'Ek alt domain taraması yanıt vermedi.' : undefined,
+            serviceFailures ? `${serviceFailures} yeni hedefte servis yanıtı alınamadı; tarama diğer hedeflerle sürdü.` : undefined,
+            failed ? `${failed} hedefte canlı güvenlik yanıtı alınamadı; diğer hedefler tarandı.` : undefined,
+            emailFailed ? 'E-posta güvenlik kontrolü başarısız oldu.' : undefined
+          ].filter(Boolean);
           setAdvancedRuns(prev => ({
             ...prev,
             [domain]: {
               running: false,
-              stage: hasFailures ? 'Kapsamlı Analiz Kısmen Tamamlandı' : 'Kapsamlı Analiz Tamamlandı',
+              stage: 'Kapsamlı Analiz Tamamlandı',
               completed: targets.length,
               total: targets.length,
               failed,
-              ...(hasFailures ? { error: `${failed ? `${failed} hedefte canlı güvenlik kanıtı alınamadı.` : ''}${failed && emailFailed ? ' ' : ''}${emailFailed ? 'E-posta güvenlik kontrolü başarısız oldu.' : ''}` } : {})
+              ...(failureMessages.length ? { error: failureMessages.join(' ') } : {})
             }
           }));
       } catch (err) {
@@ -1191,12 +1232,12 @@ function App() {
   );
   const serviceScanRunning = Boolean(activeServiceRun?.running) || selectedDetails.some(detail => detail.analyzing || detail.techAnalyzing);
   const showScanCompletions = Boolean(
-    !serviceScanRunning && !activeRun?.running && (
-      activeServiceRun?.stage === 'Servis Taraması Tamamlandı' ||
-      activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı' ||
-      activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' ||
-      activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı'
-    )
+    activeServiceRun?.stage === 'Servis Taraması Tamamlandı' ||
+    activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı' ||
+    activeRun?.running ||
+    activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' ||
+    activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı' ||
+    activeRun?.stage.startsWith('Analiz durdu')
   );
   const headerScores = selectedDetails
     .map(detail => detail.security?.score)
@@ -1480,9 +1521,30 @@ function App() {
 
               {showScanCompletions && (
                 <section className="scan-completion-summary" aria-live="polite">
-                  {(activeServiceRun?.stage === 'Servis Taraması Tamamlandı' || activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı') && <span>{activeServiceRun.stage}</span>}
-                  {activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' && <span>Kapsamlı Analiz Tamamlandı</span>}
-                  {activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı' && <span>Kapsamlı Analiz Kısmen Tamamlandı</span>}
+                  {(activeServiceRun?.stage === 'Servis Taraması Tamamlandı' || activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı') && (
+                    <div className="scan-completion-row">
+                      <span>{activeServiceRun.stage}</span>
+                      {activeServiceRun.error && <small>{activeServiceRun.error}</small>}
+                    </div>
+                  )}
+                  {activeRun?.running && (
+                    <div className="scan-completion-row is-running">
+                      <span>Kapsamlı tarama devam ediyor{activeRun.stage ? ` · ${activeRun.stage}` : ''}</span>
+                      {activeRun.total > 0 && <small>{activeRun.completed}/{activeRun.total} hedef işlendi</small>}
+                    </div>
+                  )}
+                  {!activeRun?.running && (activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' || activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı') && (
+                    <div className="scan-completion-row">
+                      <span>Kapsamlı Analiz Tamamlandı</span>
+                      {activeRun.error && <small>{activeRun.error}</small>}
+                    </div>
+                  )}
+                  {activeRun?.stage.startsWith('Analiz durdu') && (
+                    <div className="scan-completion-row has-error">
+                      <span>{activeRun.stage}</span>
+                      {activeRun.error && <small>{activeRun.error}</small>}
+                    </div>
+                  )}
                 </section>
               )}
               {selectedSubdomainsReady && (automaticStage === 'waiting-services' || automaticStage === 'waiting-advanced') && (

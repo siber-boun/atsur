@@ -2136,13 +2136,24 @@ body {
 }
 .scan-completion-summary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 5px;
   padding: 8px 18px;
   border-bottom: 1px solid var(--border-color);
   color: #56d99b;
   font: 600 11px/1.5 var(--mono);
 }
+.scan-completion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.scan-completion-row small {
+  color: var(--text-secondary);
+  font: 400 10px/1.5 var(--mono);
+}
+.scan-completion-row.is-running { color: #64b7ff; }
+.scan-completion-row.has-error { color: #ff9ca5; }
 @media (prefers-reduced-motion: reduce) {
   .analysis-action.is-running svg { animation: none; }
 }
