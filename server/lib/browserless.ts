@@ -32,6 +32,17 @@ async function validateTarget(url: URL): Promise<boolean> {
   const resolved = await resolvePublic(url.hostname);
   return !resolved.blocked && resolved.ips.length > 0;
 }
+type AllowedBrowserlessTarget = { protocol: string; port: number };
+export function allowBrowserlessNavigation(urlString: string, hostname: string, targets: AllowedBrowserlessTarget[], isTopNavigation: boolean): boolean {
+  if (!isTopNavigation) return false;
+  try {
+    const target = new URL(urlString);
+    const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
+    return target.hostname.toLowerCase() === hostname.toLowerCase() &&
+      !target.username && !target.password &&
+      targets.some((allowed) => allowed.protocol === target.protocol && allowed.port === port);
+  } catch { return false; }
+}
 async function readJson(body: AsyncIterable<Uint8Array> & { destroy?: () => void }): Promise<BrowserlessPayload | null> {
   const chunks: Buffer[] = []; let bytes = 0;
   for await (const chunk of body) { const buffer = Buffer.from(chunk); bytes += buffer.length; if (bytes > RESPONSE_LIMIT) { body.destroy?.(); return null; } chunks.push(buffer); }
@@ -40,6 +51,13 @@ async function readJson(body: AsyncIterable<Uint8Array> & { destroy?: () => void
 
 const browserlessFunction = `export default async ({ page, context }) => {
   const navigations = [];
+  const allowNavigation = ${allowBrowserlessNavigation.toString()};
+  await page.route('**/*', async route => {
+    const request = route.request();
+    const isTopNavigation = request.isNavigationRequest() && request.frame() === page.mainFrame();
+    if (!allowNavigation(request.url(), context.hostname, context.allowedTargets, isTopNavigation)) return route.abort('blockedbyclient');
+    return route.continue();
+  });
   page.on('response', response => {
     const request = response.request();
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
@@ -59,7 +77,8 @@ export async function collectBrowserlessEvidenceResult(protocol: 'http:' | 'http
   if (!endpoint) return { evidence: null, code: 'BROWSERLESS_UNCONFIGURED' };
   if (!(await validateTarget(origin))) return { evidence: null, code: 'BROWSERLESS_TARGET_BLOCKED' };
   try {
-    const response = await request(endpoint, { method: 'POST', headersTimeout: 15_000, bodyTimeout: 20_000, headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ code: browserlessFunction, context: { url: origin.toString(), bodyLimit: BODY_LIMIT } }) });
+    const allowedTargets = PORT_TARGETS.flatMap((target) => (target.webProtocols || []).map((allowedProtocol) => ({ protocol: allowedProtocol, port: target.port })));
+    const response = await request(endpoint, { method: 'POST', headersTimeout: 15_000, bodyTimeout: 20_000, headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ code: browserlessFunction, context: { url: origin.toString(), hostname: hostname.toLowerCase(), bodyLimit: BODY_LIMIT, allowedTargets } }) });
     if (response.statusCode < 200 || response.statusCode >= 300) { response.body.destroy(); return { evidence: null, code: `BROWSERLESS_HTTP_${response.statusCode}` }; }
     const data = (await readJson(response.body))?.data;
     if (!data?.finalUrl || !data.status) return { evidence: null, code: 'BROWSERLESS_INVALID_RESPONSE' };
