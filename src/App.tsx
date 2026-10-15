@@ -37,6 +37,7 @@ interface AdvancedRun {
   stage: string;
   completed: number;
   total: number;
+  failed?: number;
   error?: string;
 }
 
@@ -92,6 +93,7 @@ interface SubdomainDetail {
   cookies?: any[];
   cors?: any;
   probeErrors?: ProbeError[];
+  serviceError?: string;
   evidence?: {
     source: 'render-live' | 'browserless-live';
     status?: number;
@@ -105,6 +107,7 @@ interface SubdomainDetail {
   tlsVerification?: { verified: boolean; source: 'render-live' | 'browserless-live' };
   browserlessError?: string;
   advancedAnalyzing?: boolean;
+  advancedError?: string;
 }
 
 interface EmailSecurityInfo {
@@ -396,6 +399,7 @@ function App() {
   const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
   const [scopeVisibleForDomain, setScopeVisibleForDomain] = useState<string | null>(null);
   const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
+  const advancedAbortRef = useRef(new Map<string, AbortController>());
   const advancedBusyRef = useRef(new Set<string>());
   const autoAnalysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoAnalysis, setAutoAnalysis] = useState<{
@@ -513,6 +517,8 @@ function App() {
     setAutoAnalysis(null);
     serviceAbortRef.current?.controller.abort();
     serviceAbortRef.current = null;
+    for (const controller of advancedAbortRef.current.values()) controller.abort();
+    advancedAbortRef.current.clear();
     const accessToken = sessionStorage.getItem(ACCESS_TOKEN_KEY);
     if (accessToken) {
       void fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, keepalive: true }).catch(() => undefined);
@@ -547,6 +553,12 @@ function App() {
       setAutoAnalysis(null);
       setSelectedDomain(null);
     }
+    if (serviceAbortRef.current?.domain === domainToDelete) {
+      serviceAbortRef.current.controller.abort();
+      serviceAbortRef.current = null;
+    }
+    advancedAbortRef.current.get(domainToDelete)?.abort();
+    advancedAbortRef.current.delete(domainToDelete);
     
     if (loggedInUser) {
         const users = readStoredUsers();
@@ -658,6 +670,10 @@ function App() {
     const browserHttpsVerified = !serverVerifiedHttps && !signal?.aborted
       ? await verifyHttpsFromBrowser(sub, signal)
       : false;
+    if (signal?.aborted) {
+      setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], analyzing: false, techAnalyzing: false } }));
+      return false;
+    }
 
     if (browserHttpsVerified) {
       const browserPort: PortInfo = {
@@ -706,6 +722,7 @@ function App() {
       ...prev,
       [sub]: {
         ...prev[sub],
+        serviceError: analysisResult.status === 'fulfilled' || browserHttpsVerified ? undefined : 'Servis taraması yanıt vermedi; gösterilen eski bulgular kaldırıldı.',
         ...(analysis ? {
           ip: analysis.ip ?? null,
           ports,
@@ -713,7 +730,7 @@ function App() {
           probeErrors: Array.isArray(analysis.probeErrors) ? analysis.probeErrors : []
         } : browserHttpsVerified ? {
           ports
-        } : {}),
+        } : { ip: null, ports: [], isCloudflare: false, probeErrors: [] }),
         ...(browserlessDetails || {}),
         analyzing: false,
         techAnalyzing: false
@@ -726,13 +743,13 @@ function App() {
   const handleAnalyzeAll = async () => {
       if (!selectedDomain || !subdomains[selectedDomain]) return;
       const domain = selectedDomain;
-      if (advancedBusyRef.current.has(domain)) return;
       clearAutoAnalysisTimer();
       if (serviceAbortRef.current?.domain === domain) {
         setAutoAnalysis({ domain, stage: 'done' });
         serviceAbortRef.current?.controller.abort();
         return;
       }
+      if (advancedBusyRef.current.has(domain)) return;
 
       setAutoAnalysis({ domain, stage: 'services' });
       serviceAbortRef.current?.controller.abort();
@@ -781,7 +798,7 @@ function App() {
           ...prev,
           [domain]: {
             running: false,
-            stage: cancelled ? 'Servis taraması iptal edildi' : 'Servis Taraması Tamamlandı',
+          stage: cancelled ? 'Servis taraması iptal edildi' : failed ? 'Servis Taraması Kısmen Tamamlandı' : 'Servis Taraması Tamamlandı',
             completed,
             total: targets.length,
             failed,
@@ -795,13 +812,11 @@ function App() {
               ...(!cancelled ? { startsAt: Date.now() + 5000 } : {}) }
           : prev);
       } finally {
-        setSubdomainDetails(prev => Object.fromEntries(
-          Object.entries(prev).map(([subdomain, detail]) => [subdomain, {
-            ...detail,
-            analyzing: false,
-            techAnalyzing: false
-          }])
-        ));
+        const targetSet = new Set(targets);
+        setSubdomainDetails(prev => Object.fromEntries(Object.entries(prev).map(([subdomain, detail]) => [
+          subdomain,
+          targetSet.has(subdomain) ? { ...detail, analyzing: false, techAnalyzing: false } : detail
+        ])));
         if (serviceAbortRef.current?.controller === controller) serviceAbortRef.current = null;
       }
   };
@@ -809,14 +824,26 @@ function App() {
   const handleAdvancedAnalysis = async () => {
       if (!selectedDomain) return;
       const domain = selectedDomain;
-      if (advancedBusyRef.current.has(domain) || serviceAbortRef.current?.domain === domain) return;
+      const existingController = advancedAbortRef.current.get(domain);
+      if (existingController) {
+        clearAutoAnalysisTimer();
+        setAutoAnalysis({ domain, stage: 'done' });
+        existingController.abort();
+        return;
+      }
+      if (serviceAbortRef.current?.domain === domain) return;
       clearAutoAnalysisTimer();
       setAutoAnalysis({ domain, stage: 'done' });
+      const controller = new AbortController();
+      const { signal } = controller;
+      advancedAbortRef.current.set(domain, controller);
       advancedBusyRef.current.add(domain);
       setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Pasif kaynaklar ve DNS doğrulanıyor', completed: 0, total: 0 } }));
+      let targets: SubdomainData[] = [];
 
       try {
-          const scanRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}&validate=1`, {}, 60000);
+          const scanRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/scan?domain=${domain}&validate=1`, {}, 60000, signal);
+          if (signal.aborted) return;
           let discovered: SubdomainData[] = Array.isArray(scanRaw) ? scanRaw : (scanRaw.results || []);
           const meta: ScanMeta = {
             sources: Array.isArray(scanRaw) ? [] : (scanRaw.sources || []),
@@ -831,32 +858,82 @@ function App() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ domain, mode: 'both', seeds })
-            }, 60000);
+            }, 60000, signal);
             discovered = mergeSubdomainResults(discovered, bruteRaw.results || []);
             meta.bruteSkipped = bruteRaw.skipped;
             meta.bruteCount = (bruteRaw.results || []).length;
           } catch {
+            if (signal.aborted) return;
             meta.bruteSkipped = 'timeout';
           }
 
+          if (signal.aborted) return;
           setSubdomains(prev => ({ ...prev, [domain]: discovered }));
           setScanMeta(prev => ({ ...prev, [domain]: meta }));
 
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'E-posta ve web güvenliği inceleniyor', completed: 0, total: discovered.length } }));
-          const emailPromise = fetchJsonWithTimeout<EmailSecurityInfo>(`${API_BASE_URL}/api/email-sec?domain=${domain}`, {}, 12000)
-            .then(data => data && setEmailSecurity(prev => ({ ...prev, [domain]: data })))
-            .catch(() => undefined);
+          let emailFailed = false;
+          const emailPromise = fetchJsonWithTimeout<EmailSecurityInfo>(`${API_BASE_URL}/api/email-sec?domain=${domain}`, {}, 12000, signal)
+            .then(data => { if (!signal.aborted) setEmailSecurity(prev => ({ ...prev, [domain]: data })); })
+            .catch(() => {
+              if (!signal.aborted) {
+                emailFailed = true;
+                setEmailSecurity(prev => { const next = { ...prev }; delete next[domain]; return next; });
+              }
+            });
 
-          const targets = discovered.filter(item => item.status !== 'dead' && item.status !== 'private' && !item.wildcardMatch);
+          targets = discovered.filter(item => item.status !== 'dead' && item.status !== 'private' && !item.wildcardMatch);
+          const targetsNeedingPorts = targets.filter(item => !Array.isArray(subdomainDetails[item.subdomain]?.ports));
+          if (targetsNeedingPorts.length) {
+            setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: 0, total: targetsNeedingPorts.length } }));
+            setServiceRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: 0, total: targetsNeedingPorts.length, failed: 0 } }));
+            serviceAbortRef.current = { domain, controller };
+            let serviceCursor = 0;
+            let serviceCompleted = 0;
+            let serviceFailed = 0;
+            const serviceWorker = async () => {
+              while (serviceCursor < targetsNeedingPorts.length && !signal.aborted) {
+                const item = targetsNeedingPorts[serviceCursor++];
+                const ok = await handleAnalyzeSubdomain(item.subdomain, signal);
+                if (signal.aborted) break;
+                serviceCompleted += 1;
+                if (!ok) serviceFailed += 1;
+                setServiceRuns(prev => ({
+                  ...prev,
+                  [domain]: { running: true, stage: 'Yeni hedeflerde servisler kontrol ediliyor', completed: serviceCompleted, total: targetsNeedingPorts.length, failed: serviceFailed }
+                }));
+              }
+            };
+            await Promise.all(Array.from({ length: Math.min(2, targetsNeedingPorts.length) }, () => serviceWorker()));
+            if (serviceAbortRef.current?.controller === controller) serviceAbortRef.current = null;
+            if (signal.aborted) return;
+            setServiceRuns(prev => ({
+              ...prev,
+              [domain]: {
+                running: false,
+                stage: 'Servis Taraması Tamamlandı',
+                completed: serviceCompleted,
+                total: targetsNeedingPorts.length,
+                failed: serviceFailed,
+                ...(serviceFailed ? { error: `${serviceFailed} yeni hedefte servis taraması tamamlanamadı.` } : {})
+              }
+            }));
+          }
+          if (signal.aborted) return;
           let cursor = 0;
           let completed = 0;
+          let failed = 0;
           const worker = async () => {
-            while (cursor < targets.length) {
+            while (cursor < targets.length && !signal.aborted) {
               const item = targets[cursor++];
               const sub = item.subdomain;
-              setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], advancedAnalyzing: true } }));
+              setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], advancedAnalyzing: true, advancedError: undefined } }));
               try {
-                const data = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/advanced?subdomain=${sub}`, {}, 45000);
+                const data = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/advanced?subdomain=${sub}`, {}, 45000, signal);
+                if (signal.aborted) break;
+                if (data.blocked || (!data.ssl && !data.advanced && !data.evidence && !data.tlsVerification)) {
+                  throw new Error(data.blocked ? 'Hedef analize kapatıldı' : 'Canlı güvenlik kanıtı alınamadı');
+                }
                 setSubdomainDetails(prev => ({
                   ...prev,
                   [sub]: {
@@ -872,20 +949,60 @@ function App() {
                   }
                 }));
               } catch {
-                setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], advancedAnalyzing: false } }));
+                if (signal.aborted) break;
+                failed += 1;
+                setSubdomainDetails(prev => ({
+                  ...prev,
+                  [sub]: {
+                    ...prev[sub], ssl: undefined, security: undefined, waf: undefined, cookies: undefined,
+                    evidence: undefined, tlsVerification: undefined, technologies: [], advancedAnalyzing: false,
+                    advancedError: 'Güncel canlı güvenlik kanıtı alınamadı.'
+                  }
+                }));
               }
+              if (signal.aborted) break;
               completed += 1;
-              setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'E-posta ve web güvenliği inceleniyor', completed, total: targets.length } }));
+              setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: 'E-posta ve web güvenliği inceleniyor', completed, total: targets.length, failed } }));
             }
           };
           await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()));
           await emailPromise;
-          setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Kapsamlı Analiz Tamamlandı', completed: targets.length, total: targets.length } }));
+          if (signal.aborted) return;
+          const hasFailures = failed > 0 || emailFailed;
+          setAdvancedRuns(prev => ({
+            ...prev,
+            [domain]: {
+              running: false,
+              stage: hasFailures ? 'Kapsamlı Analiz Kısmen Tamamlandı' : 'Kapsamlı Analiz Tamamlandı',
+              completed: targets.length,
+              total: targets.length,
+              failed,
+              ...(hasFailures ? { error: `${failed ? `${failed} hedefte canlı güvenlik kanıtı alınamadı.` : ''}${failed && emailFailed ? ' ' : ''}${emailFailed ? 'E-posta güvenlik kontrolü başarısız oldu.' : ''}` } : {})
+            }
+          }));
       } catch (err) {
+          if (signal.aborted) {
+            setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz iptal edildi', completed: 0, total: 0 } }));
+            return;
+          }
           const message = err instanceof Error ? err.message : 'Gelişmiş analiz tamamlanamadı';
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: false, stage: 'Analiz durdu', completed: 0, total: 0, error: message } }));
       } finally {
-          advancedBusyRef.current.delete(domain);
+          if (advancedAbortRef.current.get(domain) === controller) {
+            if (signal.aborted) {
+              setAdvancedRuns(prev => prev[domain]?.running
+                ? { ...prev, [domain]: { running: false, stage: 'Analiz iptal edildi', completed: 0, total: 0 } }
+                : prev);
+              const targetSet = new Set(targets.map(item => item.subdomain));
+              setSubdomainDetails(prev => Object.fromEntries(Object.entries(prev).map(([subdomain, detail]) => [
+                subdomain,
+                targetSet.has(subdomain) ? { ...detail, advancedAnalyzing: false } : detail
+              ])));
+            }
+            if (serviceAbortRef.current?.controller === controller) serviceAbortRef.current = null;
+            advancedAbortRef.current.delete(domain);
+            advancedBusyRef.current.delete(domain);
+          }
       }
   };
 
@@ -1042,6 +1159,14 @@ function App() {
     detail.ip !== undefined || detail.ports !== undefined || detail.technologies !== undefined
   );
   const serviceScanRunning = Boolean(activeServiceRun?.running) || selectedDetails.some(detail => detail.analyzing || detail.techAnalyzing);
+  const showScanCompletions = Boolean(
+    !serviceScanRunning && !activeRun?.running && (
+      activeServiceRun?.stage === 'Servis Taraması Tamamlandı' ||
+      activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı' ||
+      activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' ||
+      activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı'
+    )
+  );
   const headerScores = selectedDetails
     .map(detail => detail.security?.score)
     .filter((score): score is number => typeof score === 'number');
@@ -1053,7 +1178,7 @@ function App() {
     port => port.verificationSource === 'browser' && port.protocol === 'https:' && port.isWeb === true
   ));
   const hasSecurityDetail = (detail: SubdomainDetail | undefined) => Boolean(detail && (
-    detail.ssl || detail.security || detail.waf || detail.technologies || detail.evidence || detail.advancedAnalyzing || isBrowserVerified(detail)
+    detail.ssl || detail.security || detail.waf || detail.technologies || detail.evidence || detail.advancedAnalyzing || detail.advancedError || isBrowserVerified(detail)
   ));
   const securityDetailCount = selectedDetails.filter(detail => hasSecurityDetail(detail)).length;
   const validSslCount = selectedDetails.filter(detail => detail.ssl?.valid).length;
@@ -1289,13 +1414,13 @@ function App() {
                             ? `Servisleri tara (${autoCountdown} sn)` : 'Servisleri tara'}
                       </button>
                       <button
-                        className={`btn btn-advanced analysis-action ${activeRun?.running ? 'is-running' : ''}`}
+                        className={`btn btn-advanced analysis-action ${activeRun?.running ? 'is-running is-cancel' : ''}`}
                         aria-busy={Boolean(activeRun?.running)}
                         onClick={handleAdvancedAnalysis}
-                        disabled={activeRun?.running || serviceScanRunning}
+                        disabled={serviceScanRunning && !activeRun?.running}
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
-                        {activeRun?.running ? 'Analiz sürüyor' :
+                        {activeRun?.running ? 'Analizi iptal et' :
                           automaticStage === 'waiting-advanced' && automaticStartsAt !== undefined
                             ? `Tam kapsamlı analiz (${autoCountdown} sn)` : 'Tam kapsamlı analiz'}
                       </button>
@@ -1322,6 +1447,13 @@ function App() {
                 </div>
               </div>
 
+              {showScanCompletions && (
+                <section className="scan-completion-summary" aria-live="polite">
+                  {(activeServiceRun?.stage === 'Servis Taraması Tamamlandı' || activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı') && <span>{activeServiceRun.stage}</span>}
+                  {activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' && <span>Kapsamlı Analiz Tamamlandı</span>}
+                  {activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı' && <span>Kapsamlı Analiz Kısmen Tamamlandı</span>}
+                </section>
+              )}
               {selectedSubdomainsReady && (automaticStage === 'waiting-services' || automaticStage === 'waiting-advanced') && (
                 <p className="auto-analysis-status" role="status">
                   {automaticStage === 'waiting-services' ? 'Servis taraması' : 'Tam kapsamlı analiz'} {autoCountdown} saniye sonra otomatik başlayacak.
@@ -1476,7 +1608,7 @@ function App() {
                                           })}
                                       </div>
                                     ) : (
-                                        <span className="no-ports-text">Taranan 45 portta açık servis bulunamadı</span>
+                                        <span className="no-ports-text">{detail.serviceError || 'Taranan 45 portta açık servis bulunamadı'}</span>
                                         )}
 
                                   </div>
@@ -1608,6 +1740,7 @@ function App() {
                                                     <tr key={idx}>
                                                         <td className="col-subdomain">
                                                           {sub}
+                                                          {detail.advancedError && <small className="operation-error">{detail.advancedError}</small>}
                                                           {detail.evidence?.externalRedirect?.target && <small className="passive-source-label" title="Son hedefin bulguları ilk hedefin puanına dahil edilmez">↳ Dış yönlendirme: {detail.evidence.externalRedirect.target}</small>}
                                                         </td>
                                                         <td className="col-ssl-score">

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, scryptSync } from 'node:crypto';
-import { createSessionToken, revokeSessionToken, sessionFromToken, verifyLogin } from './auth';
+import { allowApiRequest, createSessionToken, revokeSessionToken, sessionFromToken, verifyLogin } from './auth';
 
 const original = {
   email: process.env.OSINT_LOGIN_EMAIL,
@@ -31,6 +31,19 @@ test('session tokens expire, reject tampering, and can be revoked', () => {
   assert.ok(session);
   revokeSessionToken(token, session.expiresAt);
   assert.equal(sessionFromToken(token, now), null);
+});
+
+test('API requests have a per-user fixed-window limit and reopen after the window', () => {
+  const now = Date.now() + 1_000_000;
+  process.env.USER_API_REQUESTS = '2';
+  process.env.USER_API_WINDOW_MS = '5000';
+  assert.equal(allowApiRequest('user@example.test', now).allowed, true);
+  assert.equal(allowApiRequest('user@example.test', now + 1).allowed, true);
+  assert.equal(allowApiRequest('user@example.test', now + 2).allowed, false);
+  assert.equal(allowApiRequest('another@example.test', now + 2).allowed, true);
+  assert.equal(allowApiRequest('user@example.test', now + 5000).allowed, true);
+  delete process.env.USER_API_REQUESTS;
+  delete process.env.USER_API_WINDOW_MS;
 });
 
 test('restore auth environment after this file completes', () => {

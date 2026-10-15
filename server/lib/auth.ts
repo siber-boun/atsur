@@ -6,6 +6,7 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_LIMIT = 10;
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const revokedTokens = new Map<string, number>();
+const apiAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -89,12 +90,38 @@ export function allowLoginAttempt(req: Request, now = Date.now()): boolean {
   return true;
 }
 
+export function allowApiRequest(email: string, now = Date.now()): { allowed: boolean; retryAfterSeconds: number } {
+  const limit = Number.parseInt(process.env.USER_API_REQUESTS || '600', 10);
+  const windowMs = Number.parseInt(process.env.USER_API_WINDOW_MS || '900000', 10);
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 600;
+  const safeWindow = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 900_000;
+  const key = email.trim().toLowerCase();
+  const current = apiAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    if (apiAttempts.size > 10_000) {
+      for (const [entryKey, value] of apiAttempts) if (value.resetAt <= now) apiAttempts.delete(entryKey);
+    }
+    apiAttempts.set(key, { count: 1, resetAt: now + safeWindow });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  if (current.count >= safeLimit) return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - now) / 1000)) };
+  current.count += 1;
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
 export function requireAuthentication(req: Request, res: Response, next: NextFunction) {
   if (req.path === '/health' || req.path === '/api/auth/login' || req.method === 'OPTIONS') return next();
   const authorization = req.header('authorization') || '';
   const match = /^Bearer ([A-Za-z0-9._-]+)$/.exec(authorization);
   const session = match ? sessionFromToken(match[1]) : null;
   if (!session) return res.status(401).json({ error: 'Oturum gerekli veya süresi dolmuş.' });
+  if (req.path !== '/api/auth/session' && req.path !== '/api/auth/logout') {
+    const rate = allowApiRequest(session.email);
+    if (!rate.allowed) {
+      res.set('Retry-After', String(rate.retryAfterSeconds));
+      return res.status(429).json({ error: 'Tarama isteği sınırına ulaşıldı; bekleyip tekrar deneyin.', retryAfterSeconds: rate.retryAfterSeconds });
+    }
+  }
   res.locals.userEmail = session.email;
   res.locals.sessionExpiresAt = session.expiresAt;
   res.locals.sessionToken = match![1];

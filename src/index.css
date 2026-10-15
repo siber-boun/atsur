@@ -2134,6 +2134,15 @@ body {
   font: 500 11px/1.5 var(--mono);
   border-bottom: 1px solid var(--border-color);
 }
+.scan-completion-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border-color);
+  color: #56d99b;
+  font: 600 11px/1.5 var(--mono);
+}
 @media (prefers-reduced-motion: reduce) {
   .analysis-action.is-running svg { animation: none; }
 }
