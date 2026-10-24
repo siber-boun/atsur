@@ -11,25 +11,26 @@ const original = {
 const password = 'unit-test-password-12';
 const salt = randomBytes(16);
 process.env.OSINT_LOGIN_EMAIL = 'owner@example.test';
-process.env.OSINT_LOGIN_PASSWORD_HASH = `scrypt$${salt.toString('base64url')}$${scryptSync(password, salt, 64).toString('base64url')}`;
+process.env.OSINT_LOGIN_PASSWORD_HASH = `scrypt$${salt.toString('base64url')}$${scryptSync(password, salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 }).toString('base64url')}`;
 process.env.OSINT_SESSION_SECRET = randomBytes(48).toString('base64url');
 
-test('login verifies the configured email and scrypt password hash', () => {
-  assert.equal(verifyLogin(' OWNER@example.test ', password), true);
-  assert.equal(verifyLogin('other@example.test', password), false);
-  assert.equal(verifyLogin('owner@example.test', 'wrong-password'), false);
+test('login verifies the configured email and scrypt password hash', async () => {
+  assert.equal(await verifyLogin(' OWNER@example.test ', password), true);
+  assert.equal(await verifyLogin('other@example.test', password), false);
+  assert.equal(await verifyLogin('owner@example.test', 'wrong-password'), false);
 });
 
 test('session tokens expire, reject tampering, and can be revoked', () => {
   const now = Date.now();
   const token = createSessionToken('owner@example.test', now);
   assert.equal(sessionFromToken(token, now)?.email, 'owner@example.test');
-  assert.equal(sessionFromToken(token, now + 2 * 60 * 60 * 1000), null);
+  const expiringToken = createSessionToken('owner@example.test', now);
+  assert.equal(sessionFromToken(expiringToken, now + 2 * 60 * 60 * 1000), null);
   assert.equal(sessionFromToken(`${token}x`, now), null);
 
   const session = sessionFromToken(token, now);
   assert.ok(session);
-  revokeSessionToken(token, session.expiresAt);
+  revokeSessionToken(token);
   assert.equal(sessionFromToken(token, now), null);
 });
 

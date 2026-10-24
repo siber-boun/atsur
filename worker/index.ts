@@ -15,8 +15,6 @@ export default {
     const upstreamUrl = new URL(url.pathname + url.search, API_ORIGIN);
     const headers = new Headers(request.headers);
     headers.delete('host');
-    headers.delete('origin');
-    headers.delete('cookie');
     headers.delete('authorization');
     try {
       const upstreamRequest = new Request(upstreamUrl, request);

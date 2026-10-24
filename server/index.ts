@@ -13,7 +13,12 @@ import wildcardRoute from './routes/wildcard';
 import sourcesRoute from './routes/sources';
 import bruteRoute from './routes/brute';
 
+import authRoute from './routes/auth';
+import { validateAuthConfig, requireTrustedRequest, requireAuthentication } from './lib/auth';
+
+validateAuthConfig();
 const app = express();
+app.disable('x-powered-by');
 let inFlight = 0;
 
 const allowedOrigins = new Set([
@@ -25,8 +30,10 @@ app.set('trust proxy', 1);
 app.use(cors({ origin(origin, callback) {
   callback(null, !origin || allowedOrigins.has(origin));
 } }));
-app.use(express.json());
-// Demo build: API authentication is intentionally deferred. Frontend login is local-only.
+app.use(requireTrustedRequest);
+app.use(express.json({ limit: '16kb' }));
+app.use(requireAuthentication);
+app.use(authRoute);
 app.use((req, res, next) => {
   if (req.path === '/health') {
     res.locals.inFlight = inFlight;

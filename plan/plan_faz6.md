@@ -258,3 +258,20 @@ export interface SpfResult { hasRecord; all; lookupCount; permerror; permerrorRe
 
 **Geri alma:** Dört alt iş bağımsız olduğundan tek tek geri alınabilir; tüm yeni alanlar
 opsiyonel olduğu için frontend'de iz bırakmaz.
+
+## Faz 6 sonu ilave — Login ve API oturum güvenliği (24 Ekim 2026)
+
+Kullanıcı kararıyla önerinin 1, 2, 3 ve 5. maddeleri uygulandı:
+
+- [x] Frontend sabit SHA-256/parola kontrolü kaldırıldı; backend scrypt ile doğruluyor.
+- [x] İki saatlik sunucu oturumu; HttpOnly/Secure/SameSite=Strict cookie, CSRF kontrolü, çıkışta iptal ve girişte yenileme.
+- [x] Sağlık/giriş/OPTIONS dışındaki API yollarında zorunlu oturum; doğrudan Render erişiminde de 401.
+- [x] Worker cookie ve doğrulama başlıklarını sabit backend'e iletiyor.
+- [x] Arayüz açılışta sunucudan oturum kontrolü yapıyor; süre dolunca girişe dönüp taramaları durduruyor.
+- [ ] Canlı dağıtım: Render OSINT_LOGIN_EMAIL ve yeni OSINT_LOGIN_PASSWORD_HASH ayarlanmalı; frontend/Worker/backend birlikte dağıtılıp doğrulanmalı.
+
+Kurulum: `server/AUTH_SETUP.md`. Oturumlar bellektedir; Render restart sonrası yeniden giriş gerekir. Çok instance için ortak store gerekir. Önerinin 4. maddesi (giriş denemesi sınırı ve kullanıcı kotası) bu ilavede kapsam dışında bırakıldı. Faz 7'ye geçişten önce canlı kabul kontrolü yapılmalıdır.
+
+Doğrulama: 31 backend/Worker testi geçti; backend TypeScript ve frontend production build başarılı; `git diff --check` temiz. Yerel gerçek tarayıcıda giriş, yenilemede cookie oturumunun korunması, çıkış ve 390px giriş ekranı doğrulandı. Statik UI denetiminde önceden var olan iki domain formu doğrulaması ve bir textarea bulgusu kaldı; bu ilave login akışına ait değil. Canlı ortam henüz değiştirilmedi.
+
+Genel ESLint mevcut `any`, kullanılmayan değişken ve `prefer-const` borçları nedeniyle temiz değil; yeni auth/Worker dosyaları ayrıca hedefli lint ile kontrol edildi.

@@ -39,3 +39,7 @@ The final `:root` parity layer in `src/index.css` is the canonical token source.
 Automatic scope generation uses the existing active web-service criteria in `getScopeOutput`. Completed analyses produce a dialog; cancelled or stopped analyses do not. Keep partial scan failures visible in the underlying result summary. Do not introduce decorative motion for this completion notification.
 
 Generate the scope from committed final scan results and store it per domain in the user's local cache. Display saved scopes before result rows, including empty scopes. Reselecting a domain or reloading the page must preserve its scope without requiring the manual generation button; restoring a saved scope does not replay completion notifications.
+
+## Authentication
+
+App.tsx owns the Turkish login form and session recovery; server/routes/auth.ts owns identity decisions. Preserve existing visual tokens. On startup verify the HttpOnly cookie with the server before showing cached dashboard data. Never persist credentials or session tokens in browser storage. Disable duplicate login submission and show inline errors. Expiry aborts scans and returns to login. Failed logout must remain visible and allow retry.

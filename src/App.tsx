@@ -279,16 +279,8 @@ interface UserData {
   scopes?: Record<string, string>;
 }
 
-const DEMO_PASSWORD_HASH_KEY = 'osint_demo_password_sha256';
-const DEMO_PASSWORD_HASH_SEED = 'afd859d6addc81ad5c3cfe3cbed53a5ed0ae3776d7528ec1df705bf2c72a81cb';
-const DEMO_EMAIL = 'banusencer@yahoo.com';
-const SESSION_KEY = 'osint_demo_session';
-
-async function sha256Hex(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-}
+let csrfToken = '';
+type AuthSession = { email: string; expiresAt: number; csrfToken: string };
 
 function readStoredUsers(): Record<string, UserData> {
   try {
@@ -326,8 +318,12 @@ async function fetchJsonWithTimeout<T>(
 
   try {
     const headers = new Headers(init.headers);
-    const response = await fetch(url, { ...init, headers, signal: controller.signal });
+    headers.set('X-OSINT-Request', '1');
+    if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
+    const response = await fetch(url, { ...init, headers, credentials: 'include', signal: controller.signal });
+    if (response.status === 401 && !url.endsWith('/api/auth/login')) window.dispatchEvent(new Event('osint-session-expired'));
     if (!response.ok) throw new Error(`API isteği başarısız (${response.status})`);
+    if (response.status === 204) return undefined as T;
     return await response.json() as T;
   } finally {
     window.clearTimeout(timeoutId);
@@ -380,15 +376,16 @@ function AnalysisWaitIndicator() {
 const API_BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || '');
 
 function App() {
-  const hasStoredSession = Boolean(sessionStorage.getItem(SESSION_KEY));
-  const [step, setStep] = useState<Step>(hasStoredSession ? 'dashboard' : 'login');
-  const [demoPasswordHash] = useState(DEMO_PASSWORD_HASH_SEED);
+  const [step, setStep] = useState<Step>('login');
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   
   // Auth states
-  const [email, setEmail] = useState(DEMO_EMAIL);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(() => sessionStorage.getItem(SESSION_KEY));
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   const [userDataReady, setUserDataReady] = useState(false);
   
   // Dashboard states
@@ -433,12 +430,39 @@ function App() {
   const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
   const isDomainValid = domainRegex.test(domainInput);
 
-  // Demo login is intentionally local. The visible SHA-256 value is not a security boundary.
   useEffect(() => {
-    // Keep this trial build aligned with the requested legacy password if an older hash was saved.
-    localStorage.setItem(DEMO_PASSWORD_HASH_KEY, DEMO_PASSWORD_HASH_SEED);
-    setStep(sessionStorage.getItem(SESSION_KEY) ? 'dashboard' : 'login');
+    const controller = new AbortController();
+    localStorage.removeItem('osint_demo_password_sha256');
+    sessionStorage.removeItem('osint_demo_session');
+    void fetchJsonWithTimeout<AuthSession>(`${API_BASE_URL}/api/auth/session`, {}, 60000, controller.signal)
+      .then(session => {
+        csrfToken = session.csrfToken;
+        setLoggedInUser(session.email);
+        setSessionExpiresAt(session.expiresAt);
+        setStep('dashboard');
+      }).catch(() => {
+        if (!controller.signal.aborted) setAuthError('Oturum açılamadı. Lütfen giriş yapın.');
+      }).finally(() => { if (!controller.signal.aborted) setAuthChecking(false); });
+    return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    const expired = () => {
+      csrfToken = '';
+      setSessionExpiresAt(null);
+      setLoggedInUser(null);
+      setStep('login');
+      setAuthError('Oturum süresi doldu. Lütfen tekrar giriş yapın.');
+      clearAutoAnalysisTimer();
+      setAutoAnalysis(null);
+      serviceAbortRef.current?.controller.abort();
+      for (const controller of advancedAbortRef.current.values()) controller.abort();
+      advancedAbortRef.current.clear();
+    };
+    window.addEventListener('osint-session-expired', expired);
+    const timer = sessionExpiresAt ? window.setTimeout(expired, Math.max(0, sessionExpiresAt * 1000 - Date.now())) : undefined;
+    return () => { window.removeEventListener('osint-session-expired', expired); window.clearTimeout(timer); };
+  }, [sessionExpiresAt]);
 
   useEffect(() => {
     setUserDataReady(false);
@@ -493,28 +517,41 @@ function App() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (authBusy) return;
+    if (!email.trim() || !password) { setAuthError('E-posta ve şifrenizi girin.'); return; }
     setAuthError('');
+    setAuthBusy(true);
     try {
-      const savedHash = DEMO_PASSWORD_HASH_SEED;
-      localStorage.setItem(DEMO_PASSWORD_HASH_KEY, savedHash);
-      const enteredHash = await sha256Hex(password);
-      if (email.trim().toLowerCase() !== DEMO_EMAIL || enteredHash !== savedHash) {
-        setAuthError('Giriş başarısız. E-posta veya parola hatalı.');
-        return;
-      }
-      sessionStorage.setItem(SESSION_KEY, DEMO_EMAIL);
-      const users = readStoredUsers();
-      if (!users[DEMO_EMAIL]) users[DEMO_EMAIL] = { domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
-      localStorage.setItem('osint_users', JSON.stringify(users));
+      const session = await fetchJsonWithTimeout<AuthSession>(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      }, 60000);
+      csrfToken = session.csrfToken;
       setPassword('');
-      setLoggedInUser(DEMO_EMAIL);
+      setSessionExpiresAt(session.expiresAt);
+      const users = readStoredUsers();
+      if (!users[session.email]) users[session.email] = { domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
+      localStorage.setItem('osint_users', JSON.stringify(users));
+      setLoggedInUser(session.email);
       setStep('dashboard');
     } catch {
-      setAuthError('Yerel parola özeti oluşturulamadı. Tarayıcıyı yenileyip tekrar deneyin.');
-    }
+      setAuthError('Giriş yapılamadı. E-posta ve şifrenizi kontrol edip tekrar deneyin.');
+    } finally { setAuthBusy(false); }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (authBusy) return;
+    setAuthBusy(true);
+    try {
+      await fetchJsonWithTimeout<void>(`${API_BASE_URL}/api/auth/logout`, { method: 'POST' });
+    } catch {
+      setAuthError('Çıkış yapılamadı. Bağlantınızı kontrol edip tekrar deneyin.');
+      setAuthBusy(false);
+      return;
+    }
+    csrfToken = '';
+    setSessionExpiresAt(null);
+    setAuthBusy(false);
     setScopeReadyDomain(null);
     notifiedScopeRunsRef.current.clear();
     setAdvancedRuns({});
@@ -524,9 +561,8 @@ function App() {
     serviceAbortRef.current = null;
     for (const controller of advancedAbortRef.current.values()) controller.abort();
     advancedAbortRef.current.clear();
-    sessionStorage.removeItem(SESSION_KEY);
     setLoggedInUser(null);
-    setEmail(DEMO_EMAIL);
+    setEmail('');
     setPassword('');
     setStep('login');
   };
@@ -1214,6 +1250,8 @@ function App() {
     return <DesignProcessView />;
   }
 
+  if (authChecking) return <div className="login-container"><p role="status">Oturum kontrol ediliyor…</p></div>;
+
   if (step === 'login') {
     return (
       <div className="login-container">
@@ -1225,23 +1263,24 @@ function App() {
           </div>
           <div className="header">
             <h1>BUSIBER OSINT</h1>
-            <p>Deneme sürümü · yerel giriş</p>
+            <p>Hesabınızla giriş yapın</p>
           </div>
           
           {authError && (
-            <div className="auth-error">
+            <div className="auth-error" role="alert">
               {authError}
             </div>
           )}
           
-          <form onSubmit={handleLogin}>
+          <form noValidate onSubmit={handleLogin}>
             <div className="form-group">
-              <label htmlFor="email">Deneme hesabı e-posta adresi</label>
+              <label htmlFor="email">E-posta adresi</label>
               <input 
                 type="email" 
                 id="email" 
                 className="form-input" 
-                placeholder={DEMO_EMAIL}
+                placeholder="E-posta adresiniz"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -1252,7 +1291,8 @@ function App() {
               <label htmlFor="password">Şifre</label>
               <input 
                 type="password" 
-                id="password" 
+                id="password"
+                autoComplete="current-password"
                 className="form-input" 
                 placeholder="Parolanızı girin"
                 value={password}
@@ -1261,14 +1301,11 @@ function App() {
               />
             </div>
 
-            <button type="submit" className="btn" disabled={!isLoginValid}>
-              Giriş Yap
+            <button type="submit" className="btn" disabled={!isLoginValid || authBusy} aria-busy={authBusy}>
+              {authBusy ? 'Giriş yapılıyor…' : 'Giriş Yap'}
             </button>
           </form>
-          <div className="demo-hash" style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'rgba(100, 116, 139, 0.12)', fontSize: 12 }}>
-            <div style={{ marginBottom: 6 }}>Yerel parola hash’i (SHA-256)</div>
-            <code style={{ display: 'block', overflowWrap: 'anywhere', userSelect: 'all' }}>{demoPasswordHash}</code>
-          </div>
+
         </div>
       </div>
     );
@@ -1318,6 +1355,7 @@ function App() {
   // Dashboard View
   return (
     <div className="dashboard-layout fade-in">
+      {authError && <p role="alert" className="auth-error">{authError}</p>}
       {scopeReadyDomain && (
         <ScopeReadyDialog domain={scopeReadyDomain}
           targetCount={(generatedScopes[scopeReadyDomain] || '').split(', ').filter(Boolean).length}
@@ -1361,6 +1399,7 @@ function App() {
             title={`${loggedInUser || 'Kullanıcı'} · Çıkış yap`}
             aria-label="Çıkış yap"
             onClick={handleLogout}
+            disabled={authBusy}
           >
             <div className="avatar">{loggedInUser ? loggedInUser.charAt(0).toUpperCase() : 'U'}</div>
           </button>
@@ -1425,7 +1464,7 @@ function App() {
           <div className="user-info-small">
             <span className="user-email-truncate" title={loggedInUser || ''}>{loggedInUser}</span>
           </div>
-          <button className="btn-text" onClick={handleLogout}>
+          <button className="btn-text" onClick={handleLogout} disabled={authBusy}>
             <svg xmlns="http://www.w3.org/0000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Çıkış Yap
           </button>

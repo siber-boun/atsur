@@ -34,3 +34,7 @@ cd server && npm install && npm start   # Backend -> http://localhost:3001
 ```
 
 > **Not:** Yayında tarayıcı aynı adresteki `/api` yoluna bağlanır; Worker istekleri sabit Render API'sine aktarır. Böylece tarayıcıda adresler arası CORS bağlantısı gerekmez. Geliştirmede `VITE_API_URL` boşken Vite istekleri `localhost:3001`'e proxy'ler; bu değişkenle farklı bir yerel API adresi seçilebilir.
+
+## Giriş ve oturum kurulumu
+
+Backend artık `OSINT_LOGIN_EMAIL` ve `OSINT_LOGIN_PASSWORD_HASH` olmadan başlamaz. Parola özeti üretimi, cookie oturumu ve birlikte dağıtım adımları için [AUTH_SETUP.md](server/AUTH_SETUP.md) belgesini izleyin. Yerelde Vite `/api` proxy'sini kullanmak için `VITE_API_URL` boş olmalıdır.

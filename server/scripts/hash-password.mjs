@@ -44,7 +44,7 @@ try {
     throw new Error(`Parola en az ${minimumLength} karakter olmalı${legacyPassword ? ' (eski parolayı taşımak için)' : ''}.`);
   }
   const salt = randomBytes(16);
-  const digest = scryptSync(password, salt, 64);
+  const digest = scryptSync(password, salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });
   stdout.write(`OSINT_LOGIN_PASSWORD_HASH=scrypt$${salt.toString('base64url')}$${digest.toString('base64url')}\n`);
 } catch (error) {
   stdout.write(`${error.message}\n`);
