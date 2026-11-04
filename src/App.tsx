@@ -1,379 +1,15 @@
 import { useState, useEffect, useEffectEvent, useRef } from 'react';
 import './index.css';
 import { ScopeReadyDialog } from './components/ScopeReadyDialog';
-
-type Step = 'login' | 'dashboard';
-
-interface SubdomainData {
-  subdomain: string;
-  source: string;
-  sources?: string[];
-  ip?: string;
-  ips?: string[];
-  status?: 'live' | 'dead' | 'private' | 'error' | 'unknown';
-  cname?: string[];
-  wildcardMatch?: boolean;
-  discoveredBy?: 'passive' | 'brute' | 'permutation' | 'axfr' | 'cert-san';
-}
-
-interface SourceStatus {
-  id: string;
-  label: string;
-  ok: boolean;
-  count: number;
-  ms: number;
-  skipped?: 'no-key' | 'timeout' | 'error' | 'disabled' | 'rate-limited';
-}
-
-interface ScanMeta {
-  sources: SourceStatus[];
-  wildcard: { isWildcard: boolean; confidence: 'high' | 'low'; wildcardIps: string[] };
-  truncatedValidation: boolean;
-  bruteSkipped?: string;
-  bruteCount?: number;
-}
-
-interface AdvancedRun {
-  running: boolean;
-  stage: string;
-  completed: number;
-  total: number;
-  failed?: number;
-  error?: string;
-}
-
-interface ServiceRun {
-  running: boolean;
-  stage: string;
-  completed: number;
-  total: number;
-  failed: number;
-  error?: string;
-}
-
-interface PortInfo {
-  port: number;
-  status: number | string;
-  protocol: string;
-  transport?: 'tcp' | 'udp';
-  service?: string;
-  isWeb?: boolean;
-  isWebCandidate?: boolean;
-  verificationSource?: 'server' | 'render' | 'browserless' | 'browser';
-  redirected?: boolean;
-  finalHost?: string;
-}
-
-interface ProbeError {
-  port: number;
-  protocol: 'http:' | 'https:';
-  code: string;
-}
-
-interface TechInfo {
-  name: string;
-  category: string;
-  version?: string;
-  confidence?: number;
-  sources?: Array<'opentechalyzer' | 'builtin' | 'browserless-live' | 'shodan'>;
-  evidence?: string[];
-  observedAt?: string;
-  passive?: boolean;
-}
-
-interface SubdomainDetail {
-  ip: string | null;
-  ports?: PortInfo[];
-  isCloudflare?: boolean;
-  analyzing?: boolean;
-  technologies?: TechInfo[];
-  techAnalyzing?: boolean;
-  ssl?: any;
-  security?: any;
-  waf?: any;
-  cookies?: any[];
-  cors?: any;
-  probeErrors?: ProbeError[];
-  serviceError?: string;
-  evidence?: {
-    source: 'render-live' | 'browserless-live';
-    status?: number;
-    protocol?: 'http:' | 'https:';
-    server?: string;
-    redirectCount?: number;
-    redirected?: boolean;
-    finalTarget?: string;
-    externalRedirect?: { target: string; status?: number };
-  };
-  tlsVerification?: { verified: boolean; source: 'render-live' | 'browserless-live' };
-  browserlessError?: string;
-  advancedAnalyzing?: boolean;
-  advancedError?: string;
-}
-
-interface EmailSecurityInfo {
-  spf: { hasRecord: boolean, hasMinusAll: boolean, all?: string | null, lookupCount?: number, permerror?: boolean, permerrorReason?: string, truncated?: boolean };
-  dmarc: { hasRecord: boolean, policy: string, percentage?: number, aggregateReports?: boolean, forensicReports?: boolean, adkim?: string, aspf?: string };
-  dkim: { hasRecord: boolean };
-  dnssec?: boolean | null;
-  mtaSts?: { hasRecord: boolean, mode?: string, policyFetched: boolean };
-  tlsRpt?: { hasRecord: boolean };
-  caa?: { hasRecord: boolean, issuers: string[] };
-  score: number;
-  grade: string;
-}
-
-const httpStatusLabel = (status?: number) => {
-  if (status === undefined) return 'Yanıt alınamadı';
-  const labels: Record<number, string> = {
-    200: 'OK', 201: 'Created', 202: 'Accepted', 204: 'No Content',
-    301: 'Moved', 302: 'Found', 303: 'See Other', 307: 'Temporary Redirect', 308: 'Permanent Redirect',
-    400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 429: 'Too Many Requests',
-    500: 'Server Error', 502: 'Bad Gateway', 503: 'Unavailable', 504: 'Gateway Timeout'
-  };
-  return labels[status] || 'HTTP yanıtı';
-};
-
-const httpStatusTone = (status?: number) => {
-  if (status === undefined) return 'unknown';
-  if (status >= 200 && status < 300) return 'success';
-  if (status >= 300 && status < 400) return 'info';
-  if (status >= 400 && status < 500) return 'warning';
-  return 'danger';
-};
-
-const designProcessPhases = [
-  {
-    eyebrow: '01 · Referans',
-    title: 'Figma Make tasarımı incelendi',
-    description: 'Boş ekran ve sonuç ekranı ayrı durumlar olarak açıldı. Yerleşim, katman ilişkileri ve etkileşim dili canlı prototip üzerinden okundu.',
-    detail: 'OSINT Dashboard · Figma Make',
-    metric: '2 ana durum',
-  },
-  {
-    eyebrow: '02 · Sistem',
-    title: 'Görsel tokenlar çıkarıldı',
-    description: 'Koyu operasyon konsolu paleti, teknik tipografi rolleri ve ince HUD çizgileri ortak tasarım sistemine dönüştürüldü.',
-    detail: 'Inter + JetBrains Mono',
-    metric: '6 renk tokenı',
-  },
-  {
-    eyebrow: '03 · Yerleşim',
-    title: 'Ekran görevlerine göre ayrıldı',
-    description: 'Üst çubuk hızlı domain girişine, sol panel yalnızca hedeflere, geniş sağ yüzey ise analiz sonuçlarına ayrıldı.',
-    detail: 'Komut · Hedefler · Analiz',
-    metric: '3 çalışma alanı',
-  },
-  {
-    eyebrow: '04 · Akış',
-    title: 'Mevcut ürün mantığı korundu',
-    description: 'Domain ekleme, localStorage kaydı, hedef seçimi, API taraması ve sonuç detayları yeni arayüze dokunmadan taşındı.',
-    detail: 'Ekle → Solda göster → Seç → Analiz et',
-    metric: 'Aynı veri akışı',
-  },
-  {
-    eyebrow: '05 · Hareket',
-    title: 'Animasyonlar anlamlı durumlara bağlandı',
-    description: 'Radar hedef bekleme durumunu, fade-in yeni sonuçları, pulse ise aktif sistem ve tarama sinyalini anlatıyor.',
-    detail: 'Ping 3 sn · Fade 300 ms · Pulse 2 sn',
-    metric: '3 hareket ilkesi',
-  },
-  {
-    eyebrow: '06 · Doğrulama',
-    title: 'Üretim ve responsive kontroller tamamlandı',
-    description: 'Masaüstü ve mobil renderlar karşılaştırıldı; domainin solda görünmesi, sonuçların sağda açılması ve yatay taşma kontrol edildi.',
-    detail: 'React 19 · TypeScript · CSS',
-    metric: 'Build başarılı',
-  },
-] as const;
-
-function DesignProcessView() {
-  const [activeStep, setActiveStep] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const phase = designProcessPhases[activeStep];
-
-  useEffect(() => {
-    if (!isPlaying) return;
-    const timer = window.setInterval(() => {
-      setActiveStep(current => (current + 1) % designProcessPhases.length);
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, [isPlaying]);
-
-  const restart = () => {
-    setActiveStep(0);
-    setIsPlaying(true);
-  };
-
-  return (
-    <div className="process-view">
-      <header className="process-header">
-        <div className="process-brand">
-          <span className="process-brand-mark">F</span>
-          <span>FIGMA <i>→</i> REACT</span>
-        </div>
-        <div className="process-recording"><i></i> Kayıt sunumu</div>
-        <div className="process-controls">
-          <button type="button" onClick={() => setIsPlaying(value => !value)}>{isPlaying ? 'Durdur' : 'Devam et'}</button>
-          <button type="button" onClick={restart}>Baştan oynat</button>
-        </div>
-      </header>
-
-      <main className="process-main">
-        <aside className="process-timeline" aria-label="Tasarım süreci aşamaları">
-          <div className="process-intro">
-            <span>Tasarım günlüğü</span>
-            <h1>OSINT arayüzü nasıl oluştu?</h1>
-            <p>Figma referansından çalışan ürüne uzanan uygulama süreci.</p>
-          </div>
-          <ol>
-            {designProcessPhases.map((item, index) => (
-              <li key={item.eyebrow} className={index === activeStep ? 'is-current' : index < activeStep ? 'is-done' : ''}>
-                <button type="button" onClick={() => { setActiveStep(index); setIsPlaying(false); }}>
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  <b>{item.title}</b>
-                </button>
-              </li>
-            ))}
-          </ol>
-        </aside>
-
-        <section className="process-stage" aria-live="polite">
-          <div className="process-stage-grid" aria-hidden="true"></div>
-          <div className="process-step-copy" key={phase.eyebrow}>
-            <span>{phase.eyebrow}</span>
-            <h2>{phase.title}</h2>
-            <p>{phase.description}</p>
-            <div className="process-facts">
-              <div><small>Teknik not</small><strong>{phase.detail}</strong></div>
-              <div><small>Çıktı</small><strong>{phase.metric}</strong></div>
-            </div>
-          </div>
-
-          <div className={`process-visual process-visual-${activeStep + 1}`} key={`visual-${activeStep}`} aria-hidden="true">
-            <div className="process-signal"><i></i></div>
-            {activeStep === 0 && <><div className="reference-frame"><span>FIGMA MAKE</span><b>OSINT Dashboard</b><small>Empty state + Results state</small></div><div className="reference-scan"></div></>}
-            {activeStep === 1 && <><div className="token-colors">{['#080b10','#0d1117','#161b22','#21262d','#7d8590','#00e5d4'].map(color => <i key={color} style={{ background: color }}></i>)}</div><div className="token-type"><b>Inter</b><span>JetBrains Mono</span></div></>}
-            {activeStep === 2 && <div className="layout-map"><span>COMMAND BAR</span><i>HEDEFLER</i><b>ANALİZ SONUÇLARI</b><small>STATUS</small></div>}
-            {activeStep === 3 && <div className="flow-map"><span>Domain ekle</span><i>→</i><span>Solda göster</span><i>→</i><span>Hedefi seç</span><i>→</i><span>Analiz</span></div>}
-            {activeStep === 4 && <div className="motion-map"><span className="motion-radar"></span><b>300 ms</b><i></i><small>ACTIVE</small></div>}
-            {activeStep === 5 && <div className="validation-map"><span>DESKTOP <b>✓</b></span><span>MOBILE 390 <b>✓</b></span><span>DOMAIN FLOW <b>✓</b></span><span>BUILD <b>✓</b></span></div>}
-          </div>
-
-          <div className="process-progress">
-            <span style={{ width: `${((activeStep + 1) / designProcessPhases.length) * 100}%` }}></span>
-          </div>
-          <div className="process-counter">{String(activeStep + 1).padStart(2, '0')} / {String(designProcessPhases.length).padStart(2, '0')}</div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-// User data structure for localStorage
-interface UserData {
-  domains: string[];
-  subdomainsCache: Record<string, SubdomainData[]>;
-  subdomainDetailsCache: Record<string, SubdomainDetail>;
-  emailSecCache: Record<string, EmailSecurityInfo>;
-  scopes?: Record<string, string>;
-}
-
-let csrfToken = '';
-type AuthSession = { email: string; expiresAt: number; csrfToken: string };
-
-function readStoredUsers(): Record<string, UserData> {
-  try {
-    const raw = localStorage.getItem('osint_users');
-    return raw ? JSON.parse(raw) as Record<string, UserData> : {};
-  } catch {
-    return {};
-  }
-}
-
-function normalizeCachedDetail(detail: SubdomainDetail): SubdomainDetail {
-  const normalized: SubdomainDetail = {
-    ...detail,
-    analyzing: false,
-    techAnalyzing: false,
-    advancedAnalyzing: false
-  };
-  if (detail.technologies !== undefined) {
-    normalized.technologies = Array.isArray(detail.technologies) ? detail.technologies : [];
-  }
-  return normalized;
-}
-
-async function fetchJsonWithTimeout<T>(
-  url: string,
-  init: RequestInit = {},
-  timeoutMs = 15000,
-  parentSignal?: AbortSignal
-): Promise<T> {
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort();
-  if (parentSignal?.aborted) controller.abort();
-  else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const headers = new Headers(init.headers);
-    headers.set('X-OSINT-Request', '1');
-    if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
-    const response = await fetch(url, { ...init, headers, credentials: 'include', signal: controller.signal });
-    if (response.status === 401 && !url.endsWith('/api/auth/login')) window.dispatchEvent(new Event('osint-session-expired'));
-    if (!response.ok) throw new Error(`API isteği başarısız (${response.status})`);
-    if (response.status === 204) return undefined as T;
-    return await response.json() as T;
-  } finally {
-    window.clearTimeout(timeoutId);
-    parentSignal?.removeEventListener('abort', abortFromParent);
-  }
-}
-
-async function verifyHttpsFromBrowser(host: string, parentSignal?: AbortSignal): Promise<boolean> {
-  // Yalnız keşfedilmiş DNS adlarına, cookiesiz ve gövdesi okunmadan GET yapılır.
-  // no-cors, hedef CORS başlığı göndermese bile bağlantı başarısını doğrulamamızı sağlar.
-  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(host)) return false;
-  const controller = new AbortController();
-  const abortFromParent = () => controller.abort();
-  if (parentSignal?.aborted) return false;
-  parentSignal?.addEventListener('abort', abortFromParent, { once: true });
-  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
-  try {
-    const response = await fetch(`https://${host}/`, {
-      method: 'GET',
-      mode: 'no-cors',
-      credentials: 'omit',
-      cache: 'no-store',
-      redirect: 'follow',
-      referrerPolicy: 'no-referrer',
-      signal: controller.signal
-    });
-    try { await response.body?.cancel(); } catch { /* opaque yanıtta body kullanılamayabilir */ }
-    return true;
-  } catch {
-    return false;
-  } finally {
-    window.clearTimeout(timeoutId);
-    parentSignal?.removeEventListener('abort', abortFromParent);
-  }
-}
-
-function AnalysisWaitIndicator() {
-  return (
-    <span className="analysis-wait" role="status" aria-label="Render ve pasif kaynaklar kontrol ediliyor">
-      <span className="analysis-hourglass" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M6 2h12M6 22h12M7 2v4c0 2.6 2 4.1 5 6-3 1.9-5 3.4-5 6v4M17 2v4c0 2.6-2 4.1-5 6 3 1.9 5 3.4 5 6v4"/></svg>
-      </span>
-      <span>Render kontrol ediliyor</span>
-      <i className="analysis-wait-track" aria-hidden="true"><b></b></i>
-    </span>
-  );
-}
-
-// Same-origin /api: Vite proxies locally; the production Worker forwards to Render.
-const API_BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || '');
+import { AnalysisWaitIndicator } from './components/AnalysisWaitIndicator';
+import { DesignProcessView } from './views/DesignProcessView';
+import { API_BASE_URL, fetchJsonWithTimeout, setCsrfToken, statusFromError, verifyHttpsFromBrowser } from './lib/api';
+import { httpStatusLabel, httpStatusTone } from './lib/format';
+import { emptyUserData, normalizeCachedDetail, normalizeSubdomainCache, readStoredUsers, updateStoredUser, writeStoredUsers } from './lib/storage';
+import type {
+  AdvancedResponse, AdvancedRun, AnalyzeResponse, AuthSession, BruteResponse, EmailSecurityInfo, PortInfo,
+  ScanMeta, ScanResponse, ServiceRun, Step, SubdomainData, SubdomainDetail
+} from './types';
 
 function App() {
   const [step, setStep] = useState<Step>('login');
@@ -436,7 +72,7 @@ function App() {
     sessionStorage.removeItem('osint_demo_session');
     void fetchJsonWithTimeout<AuthSession>(`${API_BASE_URL}/api/auth/session`, {}, 60000, controller.signal)
       .then(session => {
-        csrfToken = session.csrfToken;
+        setCsrfToken(session.csrfToken);
         setLoggedInUser(session.email);
         setSessionExpiresAt(session.expiresAt);
         setStep('dashboard');
@@ -448,7 +84,7 @@ function App() {
 
   useEffect(() => {
     const expired = () => {
-      csrfToken = '';
+      setCsrfToken('');
       setSessionExpiresAt(null);
       setLoggedInUser(null);
       setStep('login');
@@ -468,18 +104,13 @@ function App() {
     setUserDataReady(false);
     if (loggedInUser) {
       const users = readStoredUsers();
-      const userData = users[loggedInUser] || {
-        domains: [],
-        subdomainsCache: {},
-        subdomainDetailsCache: {},
-        emailSecCache: {}
-      };
+      const userData = users[loggedInUser] || emptyUserData();
       if (!users[loggedInUser]) {
         users[loggedInUser] = userData;
-        localStorage.setItem('osint_users', JSON.stringify(users));
+        writeStoredUsers(users);
       }
       setDomains(userData.domains || []);
-      setSubdomains(userData.subdomainsCache || {});
+      setSubdomains(normalizeSubdomainCache(userData.subdomainsCache));
       const cachedDetails = userData.subdomainDetailsCache || {};
       setSubdomainDetails(Object.fromEntries(
         Object.entries(cachedDetails).map(([subdomain, detail]) => [subdomain, normalizeCachedDetail(detail)])
@@ -500,18 +131,15 @@ function App() {
   // Save domain list and caches when they change
   useEffect(() => {
     if (loggedInUser && userDataReady) {
-      const users = readStoredUsers();
-      
-      if (users[loggedInUser]) {
-        users[loggedInUser].domains = domains;
-        users[loggedInUser].subdomainsCache = subdomains;
-        users[loggedInUser].subdomainDetailsCache = Object.fromEntries(
+      updateStoredUser(loggedInUser, data => {
+        data.domains = domains;
+        data.subdomainsCache = subdomains;
+        data.subdomainDetailsCache = Object.fromEntries(
           Object.entries(subdomainDetails).map(([subdomain, detail]) => [subdomain, normalizeCachedDetail(detail)])
         );
-        users[loggedInUser].emailSecCache = emailSecurity;
-        users[loggedInUser].scopes = generatedScopes;
-        localStorage.setItem('osint_users', JSON.stringify(users));
-      }
+        data.emailSecCache = emailSecurity;
+        data.scopes = generatedScopes;
+      });
     }
   }, [domains, subdomains, subdomainDetails, emailSecurity, generatedScopes, loggedInUser, userDataReady]);
 
@@ -526,12 +154,12 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       }, 60000);
-      csrfToken = session.csrfToken;
+      setCsrfToken(session.csrfToken);
       setPassword('');
       setSessionExpiresAt(session.expiresAt);
       const users = readStoredUsers();
-      if (!users[session.email]) users[session.email] = { domains: [], subdomainsCache: {}, subdomainDetailsCache: {}, emailSecCache: {} };
-      localStorage.setItem('osint_users', JSON.stringify(users));
+      if (!users[session.email]) users[session.email] = emptyUserData();
+      writeStoredUsers(users);
       setLoggedInUser(session.email);
       setStep('dashboard');
     } catch {
@@ -549,7 +177,7 @@ function App() {
       setAuthBusy(false);
       return;
     }
-    csrfToken = '';
+    setCsrfToken('');
     setSessionExpiresAt(null);
     setAuthBusy(false);
     setScopeReadyDomain(null);
@@ -600,12 +228,10 @@ function App() {
     advancedAbortRef.current.delete(domainToDelete);
     
     if (loggedInUser) {
-        const users = readStoredUsers();
-        if (users[loggedInUser]) {
-            users[loggedInUser].domains = newDomains;
-            users[loggedInUser].subdomainsCache = newSubdomains;
-            localStorage.setItem('osint_users', JSON.stringify(users));
-        }
+      updateStoredUser(loggedInUser, data => {
+        data.domains = newDomains;
+        data.subdomainsCache = newSubdomains;
+      });
     }
   };
 
@@ -648,16 +274,16 @@ function App() {
     
     try {
       const scanUrl = `${API_BASE_URL}/api/scan?domain=${encodeURIComponent(domain)}`;
-      let raw: any;
+      let raw: ScanResponse | SubdomainData[] | undefined;
       let lastError: unknown;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          raw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000);
+          raw = await fetchJsonWithTimeout<ScanResponse | SubdomainData[]>(scanUrl, {}, 90000);
           lastError = undefined;
           break;
         } catch (scanError) {
           lastError = scanError;
-          const status = scanError instanceof Error ? Number(scanError.message.match(/\((\d{3})\)/)?.[1]) : 0;
+          const status = statusFromError(scanError);
           const transient = scanError instanceof TypeError ||
             (scanError instanceof DOMException && scanError.name === 'AbortError') ||
             status === 429 || status >= 500;
@@ -673,21 +299,21 @@ function App() {
       // eski dizi cevabı da önbellekteki/geri alınmış sürümler için desteklenir.
       const list: SubdomainData[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.results) ? raw.results : []);
       setSubdomains(prev => ({ ...prev, [domain]: list }));
-      if (!Array.isArray(raw)) {
+      if (raw && !Array.isArray(raw)) {
+        const scan = raw;
         setScanMeta(prev => ({
           ...prev,
           [domain]: {
-            sources: raw.sources || [],
-            wildcard: raw.wildcard,
-            truncatedValidation: Boolean(raw.truncatedValidation)
+            sources: scan.sources || [],
+            wildcard: scan.wildcard || { isWildcard: false, confidence: 'low', wildcardIps: [] },
+            truncatedValidation: Boolean(scan.truncatedValidation)
           }
         }));
       }
-      
-    } catch (err: any) {
+
+    } catch (err: unknown) {
       clearTimeout(wakeUpTimer);
-      const message = err instanceof Error ? err.message : '';
-      const status = Number(message.match(/\((\d{3})\)/)?.[1]);
+      const status = statusFromError(err);
       const cachedCount = subdomains[domain]?.length || 0;
       const failureMessage = status === 401
         ? 'Tarama sunucusu hâlâ oturum istiyor (HTTP 401). Backend güncellemesi henüz yayına alınmamış olabilir.'
@@ -723,8 +349,8 @@ function App() {
   const handleAnalyzeSubdomain = async (sub: string, signal?: AbortSignal): Promise<boolean> => {
     setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], analyzing: true } }));
 
-    const analysisResult = await Promise.allSettled([fetchJsonWithTimeout<{ ip?: string | null; ports?: PortInfo[]; isCloudflare?: boolean; probeErrors?: ProbeError[] }>(
-      `${API_BASE_URL}/api/analyze?domain=${sub}`,
+    const analysisResult = await Promise.allSettled([fetchJsonWithTimeout<AnalyzeResponse>(
+      `${API_BASE_URL}/api/analyze?domain=${encodeURIComponent(sub)}`,
       {},
       // 45 port taraması, özellikle Render'ın soğuk başlangıcı veya yavaş hedeflerde
       // 25 saniyeyi aşabilir. Bu istek için daha geniş bir bütçe verilir.
@@ -768,11 +394,7 @@ function App() {
     let browserlessDetails: Partial<SubdomainDetail> | undefined;
     if (browserHttpsVerified && !signal?.aborted) {
       try {
-        const advanced = await fetchJsonWithTimeout<{
-          ssl?: any; advanced?: { security?: any; waf?: any; cookies?: any[] } | null;
-          technologies?: TechInfo[]; evidence?: SubdomainDetail['evidence'];
-          tlsVerification?: SubdomainDetail['tlsVerification']; browserlessError?: string;
-        }>(`${API_BASE_URL}/api/advanced?subdomain=${encodeURIComponent(sub)}&browserVerified=1`, {}, 45000, signal);
+        const advanced = await fetchJsonWithTimeout<AdvancedResponse>(`${API_BASE_URL}/api/advanced?subdomain=${encodeURIComponent(sub)}&browserVerified=1`, {}, 45000, signal);
         browserlessDetails = {
           ssl: advanced.ssl,
           security: advanced.advanced?.security,
@@ -928,10 +550,10 @@ function App() {
 
       try {
           const scanUrl = `${API_BASE_URL}/api/scan?domain=${encodeURIComponent(domain)}&validate=1`;
-          let scanRaw: any;
+          let scanRaw: ScanResponse | SubdomainData[];
           try {
             try {
-              scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+              scanRaw = await fetchJsonWithTimeout<ScanResponse | SubdomainData[]>(scanUrl, {}, 90000, signal);
             } catch (firstError) {
               const transientFetchFailure = firstError instanceof TypeError ||
                 (firstError instanceof DOMException && firstError.name === 'AbortError');
@@ -951,7 +573,7 @@ function App() {
               });
               if (signal.aborted) return;
               currentPhase = 'Pasif kaynaklar ve DNS doğrulama';
-              scanRaw = await fetchJsonWithTimeout<any>(scanUrl, {}, 90000, signal);
+              scanRaw = await fetchJsonWithTimeout<ScanResponse | SubdomainData[]>(scanUrl, {}, 90000, signal);
             }
             } catch (scanError) {
             if (signal.aborted) return;
@@ -970,7 +592,7 @@ function App() {
           let discovered: SubdomainData[] = Array.isArray(scanRaw) ? scanRaw : (scanRaw.results || []);
           const meta: ScanMeta = {
             sources: Array.isArray(scanRaw) ? [] : (scanRaw.sources || []),
-            wildcard: Array.isArray(scanRaw) ? { isWildcard: false, confidence: 'low', wildcardIps: [] } : scanRaw.wildcard,
+            wildcard: (Array.isArray(scanRaw) ? undefined : scanRaw.wildcard) || { isWildcard: false, confidence: 'low', wildcardIps: [] },
             truncatedValidation: Array.isArray(scanRaw) ? false : Boolean(scanRaw.truncatedValidation)
           };
 
@@ -978,7 +600,7 @@ function App() {
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: 0 } }));
           const seeds = discovered.filter(item => item.status === 'live').slice(0, 30).map(item => item.subdomain);
           try {
-            const bruteRaw = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/brute`, {
+            const bruteRaw = await fetchJsonWithTimeout<BruteResponse>(`${API_BASE_URL}/api/brute`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ domain, mode: 'both', seeds })
@@ -999,7 +621,7 @@ function App() {
           currentPhase = 'E-posta ve web güvenliği inceleniyor';
           setAdvancedRuns(prev => ({ ...prev, [domain]: { running: true, stage: currentPhase, completed: 0, total: discovered.length } }));
           let emailFailed = false;
-          const emailPromise = fetchJsonWithTimeout<EmailSecurityInfo>(`${API_BASE_URL}/api/email-sec?domain=${domain}`, {}, 12000, signal)
+          const emailPromise = fetchJsonWithTimeout<EmailSecurityInfo>(`${API_BASE_URL}/api/email-sec?domain=${encodeURIComponent(domain)}`, {}, 12000, signal)
             .then(data => { if (!signal.aborted) setEmailSecurity(prev => ({ ...prev, [domain]: data })); })
             .catch(() => {
               if (!signal.aborted) {
@@ -1063,7 +685,7 @@ function App() {
               const sub = item.subdomain;
               setSubdomainDetails(prev => ({ ...prev, [sub]: { ...prev[sub], advancedAnalyzing: true, advancedError: undefined } }));
               try {
-                const data = await fetchJsonWithTimeout<any>(`${API_BASE_URL}/api/advanced?subdomain=${sub}`, {}, 45000, signal);
+                const data = await fetchJsonWithTimeout<AdvancedResponse>(`${API_BASE_URL}/api/advanced?subdomain=${encodeURIComponent(sub)}`, {}, 45000, signal);
                 if (signal.aborted) break;
                 if (data.blocked || (!data.ssl && !data.advanced && !data.evidence && !data.tlsVerification)) {
                   throw new Error(data.blocked ? 'Hedef analize kapatıldı' : 'Canlı güvenlik kanıtı alınamadı');
@@ -1748,7 +1370,7 @@ function App() {
                         const detail = subdomainDetails[sub];
 
                         let sourceBadgeClass = 'source-crt';
-                        let sourceLabel = source || 'Pasif kaynak';
+                        const sourceLabel = source || 'Pasif kaynak';
                         if (source === 'HackerTarget') sourceBadgeClass = 'source-ht';
                         else if (source && source.includes('+')) sourceBadgeClass = 'source-both';
                         else if (!isLegacyString && (item.discoveredBy === 'brute' || item.discoveredBy === 'permutation')) sourceBadgeClass = 'source-brute';
