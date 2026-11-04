@@ -1,13 +1,24 @@
-import { useState, useEffect, useEffectEvent, useRef } from 'react';
+import { useState, useEffect, useEffectEvent, useMemo, useRef, type ReactNode } from 'react';
 import './index.css';
+import './styles/console.css';
 import { ScopeReadyDialog } from './components/ScopeReadyDialog';
-import { AnalysisWaitIndicator } from './components/AnalysisWaitIndicator';
+import { ConsoleShell } from './components/ConsoleShell';
+import { BrandLockup } from './components/Logo';
+import { ConsoleContext, DOMAIN_PATTERN, type ConsoleValue } from './lib/console';
+import { useHashRoute, type ViewId } from './lib/route';
+import { buildWorkspace, scopeHosts } from './lib/workspace';
+import { AiView } from './views/AiView';
+import { AssetsView } from './views/AssetsView';
+import { DashboardView } from './views/DashboardView';
+import { FindingsView } from './views/FindingsView';
+import { ScopeView } from './views/ScopeView';
+import { TargetsView } from './views/TargetsView';
+import { TechnologiesView } from './views/TechnologiesView';
 import { DesignProcessView } from './views/DesignProcessView';
 import { API_BASE_URL, fetchJsonWithTimeout, setCsrfToken, statusFromError, verifyHttpsFromBrowser } from './lib/api';
-import { httpStatusLabel, httpStatusTone } from './lib/format';
-import { emptyUserData, normalizeCachedDetail, normalizeSubdomainCache, readStoredUsers, updateStoredUser, writeStoredUsers } from './lib/storage';
+import { emptyUserData, normalizeCachedDetail, normalizeSubdomainCache, readPref, readStoredUsers, updateStoredUser, writePref, writeStoredUsers } from './lib/storage';
 import type {
-  AdvancedResponse, AdvancedRun, AnalyzeResponse, AuthSession, BruteResponse, EmailSecurityInfo, PortInfo,
+  AdvancedResponse, AdvancedRun, AiReport, AnalyzeResponse, AuthSession, BruteResponse, EmailSecurityInfo, PortInfo,
   ScanMeta, ScanResponse, ServiceRun, Step, SubdomainData, SubdomainDetail
 } from './types';
 
@@ -25,7 +36,6 @@ function App() {
   const [userDataReady, setUserDataReady] = useState(false);
   
   // Dashboard states
-  const [domainInput, setDomainInput] = useState('');
   const [domains, setDomains] = useState<string[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [subdomains, setSubdomains] = useState<Record<string, SubdomainData[]>>({});
@@ -38,8 +48,8 @@ function App() {
   const [advancedRuns, setAdvancedRuns] = useState<Record<string, AdvancedRun>>({});
   const [serviceRuns, setServiceRuns] = useState<Record<string, ServiceRun>>({});
   const [generatedScopes, setGeneratedScopes] = useState<Record<string, string>>({});
+  const [aiReports, setAiReports] = useState<Record<string, AiReport>>({});
   const [scopeReadyDomain, setScopeReadyDomain] = useState<string | null>(null);
-  const [scopeCopyMessage, setScopeCopyMessage] = useState('');
   const notifiedScopeRunsRef = useRef(new Map<string, AdvancedRun>());
   const serviceAbortRef = useRef<{ domain: string; controller: AbortController } | null>(null);
   const advancedAbortRef = useRef(new Map<string, AbortController>());
@@ -62,9 +72,7 @@ function App() {
   
   const isLoginValid = email.trim().length > 0 && password.length > 0;
   
-  // Sıkı domain doğrulaması (Sadece harf, rakam, tire ve nokta)
-  const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
-  const isDomainValid = domainRegex.test(domainInput);
+  const [route, navigate] = useHashRoute();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -117,6 +125,10 @@ function App() {
       ));
       setEmailSecurity(userData.emailSecCache || {});
       setGeneratedScopes(userData.scopes || {});
+      setAiReports(userData.aiReports || {});
+      const lastTarget = readPref('target');
+      // Son seçilen hedef cache'ten geri yüklenir; otomatik tarama başlatılmaz.
+      setSelectedDomain(lastTarget && (userData.domains || []).includes(lastTarget) ? lastTarget : null);
       setUserDataReady(true);
     } else {
       setDomains([]);
@@ -125,6 +137,7 @@ function App() {
       setSubdomainDetails({});
       setEmailSecurity({});
       setGeneratedScopes({});
+      setAiReports({});
     }
   }, [loggedInUser]);
 
@@ -139,9 +152,10 @@ function App() {
         );
         data.emailSecCache = emailSecurity;
         data.scopes = generatedScopes;
+        data.aiReports = aiReports;
       });
     }
-  }, [domains, subdomains, subdomainDetails, emailSecurity, generatedScopes, loggedInUser, userDataReady]);
+  }, [domains, subdomains, subdomainDetails, emailSecurity, generatedScopes, aiReports, loggedInUser, userDataReady]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,16 +209,7 @@ function App() {
     setStep('login');
   };
 
-  const handleAddDomain = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isDomainValid && !domains.includes(domainInput)) {
-      setDomains([...domains, domainInput]);
-      setDomainInput('');
-    }
-  };
-
-  const handleDeleteDomain = (domainToDelete: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteDomain = (domainToDelete: string) => {
     setGeneratedScopes(prev => { const next = { ...prev }; delete next[domainToDelete]; return next; });
     notifiedScopeRunsRef.current.delete(domainToDelete);
     
@@ -342,7 +347,7 @@ function App() {
         serviceAbortRef.current?.domain === domain ? 'services' : 'waiting-services'
     });
     setSelectedDomain(domain);
-    setScopeCopyMessage('');
+    writePref('target', domain);
     fetchSubdomains(domain);
   };
 
@@ -812,37 +817,8 @@ function App() {
     };
   }, [step, userDataReady, selectedDomain, selectedSubdomainsReady, automaticStage, automaticStartsAt]);
 
-  const getScopeOutput = (domain: string): string => {
-      if (!subdomains[domain]) return '';
-      
-      const validSubdomains: string[] = [];
-
-      const subs = subdomains[domain];
-      
-      subs.forEach(item => {
-          const isLegacyString = typeof item === 'string';
-          const sub = isLegacyString ? (item as string) : item.subdomain;
-          const detail = subdomainDetails[sub];
-
-          // Kapsama yalnız erişilebilir HTTP/S uygulamaları alınır. Subdomain adı
-          // filtrelenmez; mail.*, webmail.* ve benzeri adlarda yönetim paneli olabilir.
-          // Tek başına HTTP
-          // 301 yönlendirmesi yeterli değildir; HTTPS hedefi erişilemiyorsa scope'a eklenmez.
-          if (detail && detail.ports && detail.ports.length > 0) {
-              const hasActiveWeb = detail.ports.some(p =>
-                (p.isWeb === true || p.protocol === 'http:' || p.protocol === 'https:') &&
-                (p.protocol === 'https:' || !String(p.status).startsWith('3'))
-              );
-              if (hasActiveWeb) {
-                  validSubdomains.push(sub);
-              }
-          }
-      });
-
-      return [...new Set(validSubdomains)].sort().join(', ');
-  };
-
-  const scopeOutput = selectedDomain ? (generatedScopes[selectedDomain] ?? getScopeOutput(selectedDomain)) : '';
+  const getScopeOutput = (domain: string): string =>
+    scopeHosts(subdomains[domain] || [], subdomainDetails).join(', ');
 
   const handleGenerateScope = () => {
       if (!selectedDomain || !subdomains[selectedDomain]) return;
@@ -853,7 +829,6 @@ function App() {
   const createCompletedScope = useEffectEvent((domain: string) => {
     // Read committed results rather than the state captured when analysis began.
     const output = getScopeOutput(domain);
-    setScopeCopyMessage('');
     setGeneratedScopes(prev => ({ ...prev, [domain]: output }));
     setScopeReadyDomain(domain);
   });
@@ -868,6 +843,10 @@ function App() {
     }
   }, [advancedRuns, step, userDataReady]);
 
+  const workspace = useMemo(() => selectedDomain
+    ? buildWorkspace(selectedDomain, subdomains[selectedDomain] || [], subdomainDetails, emailSecurity[selectedDomain], scanMeta[selectedDomain])
+    : null, [selectedDomain, subdomains, subdomainDetails, emailSecurity, scanMeta]);
+
   if (new URLSearchParams(window.location.search).get('view') === 'design-process') {
     return <DesignProcessView />;
   }
@@ -878,13 +857,11 @@ function App() {
     return (
       <div className="login-container">
         <div className="card login-card fade-in">
-          <div className="icon-container">
-            <div className="icon">
-              <svg xmlns="http://www.w3.org/0000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-            </div>
+          <div className="ac-login-brand">
+            <BrandLockup />
           </div>
           <div className="header">
-            <h1>BUSIBER OSINT</h1>
+            <h1>Pasif OSINT konsolu</h1>
             <p>Hesabınızla giriş yapın</p>
           </div>
           
@@ -934,741 +911,101 @@ function App() {
   }
 
   const selectedResults = selectedDomain ? (subdomains[selectedDomain] || []) : [];
-  const activeMeta = selectedDomain ? scanMeta[selectedDomain] : undefined;
   const activeRun = selectedDomain ? advancedRuns[selectedDomain] : undefined;
   const activeServiceRun = selectedDomain ? serviceRuns[selectedDomain] : undefined;
-  const liveCount = selectedResults.filter(item => typeof item !== 'string' && item.status === 'live').length;
-  const unknownCount = selectedResults.filter(item => typeof item !== 'string' && item.status === 'unknown').length;
-  const healthySources = activeMeta?.sources.filter(source => source.ok).length || 0;
-  const selectedDetails = selectedResults.map(item => {
-    const sub = typeof item === 'string' ? item : item.subdomain;
-    return subdomainDetails[sub];
-  }).filter(Boolean);
+  const selectedDetails = selectedResults.map(item => subdomainDetails[item.subdomain]).filter(Boolean);
   const hasServiceResults = selectedDetails.some(detail =>
     detail.ip !== undefined || detail.ports !== undefined || detail.technologies !== undefined
   );
   const serviceScanRunning = Boolean(activeServiceRun?.running) || selectedDetails.some(detail => detail.analyzing || detail.techAnalyzing);
-  const showScanCompletions = Boolean(
-    activeServiceRun?.stage === 'Servis Taraması Tamamlandı' ||
-    activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı' ||
-    activeRun?.running ||
-    activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' ||
-    activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı' ||
-    activeRun?.stage.startsWith('Analiz durdu')
-  );
-  const headerScores = selectedDetails
-    .map(detail => detail.security?.score)
-    .filter((score): score is number => typeof score === 'number');
-  const averageHeaderScore = headerScores.length
-    ? Math.round(headerScores.reduce((sum, score) => sum + score, 0) / headerScores.length)
-    : null;
-  const advancedAnalyzedCount = selectedDetails.filter(detail => detail.ssl || detail.security || detail.waf || detail.evidence).length;
-  const isBrowserVerified = (detail: SubdomainDetail | undefined) => Boolean(detail?.ports?.some(
-    port => port.verificationSource === 'browser' && port.protocol === 'https:' && port.isWeb === true
-  ));
-  const hasSecurityDetail = (detail: SubdomainDetail | undefined) => Boolean(detail && (
-    detail.ssl || detail.security || detail.waf || detail.technologies || detail.evidence || detail.advancedAnalyzing || detail.advancedError || isBrowserVerified(detail)
-  ));
-  const securityDetailCount = selectedDetails.filter(detail => hasSecurityDetail(detail)).length;
-  const validSslCount = selectedDetails.filter(detail => detail.ssl?.valid).length;
-  const wafCount = selectedDetails.filter(detail => detail.waf?.detected).length;
-  const hasAdvancedResults = Boolean(activeRun || emailSecurity[selectedDomain || ''] || advancedAnalyzedCount);
+  const serviceRunning = serviceScanRunning && !activeRun?.running;
+  const scopeText = selectedDomain ? (generatedScopes[selectedDomain] ?? getScopeOutput(selectedDomain)) : '';
 
-  // Dashboard View
+  const consoleValue: ConsoleValue = {
+    user: loggedInUser,
+    domains,
+    domain: selectedDomain,
+    domainState: domain => loading[domain] || advancedRuns[domain]?.running || serviceRuns[domain]?.running ? 'scanning'
+      : subdomains[domain]?.length ? 'done' : 'pending',
+    domainAssetCount: domain => subdomains[domain]?.length || 0,
+    domainScopeCount: domain => generatedScopes[domain] === undefined ? null : generatedScopes[domain].split(', ').filter(Boolean).length,
+    ws: workspace,
+    route,
+    navigate,
+    loading: Boolean(selectedDomain && loading[selectedDomain]),
+    wakingUp: Boolean(selectedDomain && wakingUp[selectedDomain]),
+    error: selectedDomain ? error[selectedDomain] || undefined : undefined,
+    runs: {
+      service: activeServiceRun,
+      advanced: activeRun,
+      serviceRunning,
+      advancedRunning: Boolean(activeRun?.running),
+      autoStage: automaticStage,
+      autoCountdown,
+      autoScheduled: selectedSubdomainsReady && automaticStartsAt !== undefined
+    },
+    scope: {
+      hosts: scopeText.split(', ').filter(Boolean),
+      text: scopeText,
+      saved: Boolean(selectedDomain && generatedScopes[selectedDomain] !== undefined),
+      canGenerate: hasServiceResults && !serviceRunning,
+      generate: handleGenerateScope
+    },
+    actions: {
+      selectDomain: domain => {
+        handleDomainClick(domain);
+        if (route.view === 'targets' || route.host) navigate({ view: route.view === 'targets' ? 'dashboard' : route.view });
+      },
+      addDomain: domain => {
+        const normalized = domain.trim().toLowerCase();
+        if (!DOMAIN_PATTERN.test(normalized)) return false;
+        if (!domains.includes(normalized)) setDomains(prev => [...prev, normalized]);
+        handleDomainClick(normalized);
+        if (route.view === 'targets') navigate({ view: 'dashboard' });
+        return true;
+      },
+      deleteDomain: handleDeleteDomain,
+      refresh: () => { if (selectedDomain) void fetchSubdomains(selectedDomain, true); },
+      analyzeAll: () => { void handleAnalyzeAll(); },
+      advancedAnalysis: () => { void handleAdvancedAnalysis(); },
+      analyzeHost: host => { void handleAnalyzeSubdomain(host); },
+      logout: () => { void handleLogout(); }
+    },
+    ai: {
+      report: selectedDomain ? aiReports[selectedDomain] : undefined,
+      saveReport: report => {
+        if (!selectedDomain) return;
+        const domain = selectedDomain;
+        setAiReports(prev => {
+          const next = { ...prev };
+          if (report) next[domain] = report; else delete next[domain];
+          return next;
+        });
+      }
+    },
+    authBusy
+  };
+
+  const views: Record<ViewId, ReactNode> = {
+    dashboard: <DashboardView />,
+    assets: <AssetsView />,
+    findings: <FindingsView />,
+    tech: <TechnologiesView />,
+    scope: <ScopeView />,
+    ai: <AiView />,
+    targets: <TargetsView />
+  };
+
   return (
-    <div className="dashboard-layout fade-in">
-      {authError && <p role="alert" className="auth-error">{authError}</p>}
+    <ConsoleContext.Provider value={consoleValue}>
+      {authError && <p role="alert" className="auth-error ac-floating-alert">{authError}</p>}
       {scopeReadyDomain && (
         <ScopeReadyDialog domain={scopeReadyDomain}
           targetCount={(generatedScopes[scopeReadyDomain] || '').split(', ').filter(Boolean).length}
           onDismiss={() => setScopeReadyDomain(null)} />
       )}
-      <header className="topbar">
-        <div className="console-brand" aria-label="OSINT Core">
-          <span className="console-mark" aria-hidden="true">
-            <svg viewBox="0 0 28 28" fill="none">
-              <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.5" />
-              <line x1="17" y1="17" x2="24" y2="24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.4" />
-            </svg>
-          </span>
-          <span>OSINT<strong>CORE</strong></span>
-        </div>
-
-        <form onSubmit={handleAddDomain} className="command-search" aria-label="Yeni hedef domain ekle">
-          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="6.5" cy="6.5" r="4.5" />
-            <line x1="10" y1="10" x2="14" y2="14" strokeLinecap="round" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Domain ekle — örn. sirketadi.com"
-            value={domainInput}
-            onChange={(e) => setDomainInput(e.target.value)}
-            aria-label="Domain"
-          />
-          <button type="submit" disabled={!isDomainValid} title="Domaini listeye ekle">
-            <span>Ekle</span>
-            <kbd>↵</kbd>
-          </button>
-        </form>
-
-        <div className="topbar-actions">
-          <span className="system-kicker"><i></i> Sistem aktif</span>
-          <button
-            type="button"
-            className="user-profile user-profile-button"
-            title={`${loggedInUser || 'Kullanıcı'} · Çıkış yap`}
-            aria-label="Çıkış yap"
-            onClick={handleLogout}
-            disabled={authBusy}
-          >
-            <div className="avatar">{loggedInUser ? loggedInUser.charAt(0).toUpperCase() : 'U'}</div>
-          </button>
-        </div>
-      </header>
-
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <div className="sidebar-logo">
-            <svg xmlns="http://www.w3.org/0000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            <span>BUSIBER OSINT Platform</span>
-          </div>
-        </div>
-        
-        <div className="sidebar-content">
-          <div className="sidebar-heading">
-            <h3 className="section-title">Hedef domainler</h3>
-            <span>{domains.length}</span>
-          </div>
-          
-          {domains.length === 0 ? (
-            <div className="empty-state">
-              <p>Henüz domain eklenmedi.</p>
-            </div>
-          ) : (
-            <ul className="domain-list">
-              {domains.map((d, idx) => {
-                const isSelected = selectedDomain === d;
-                const status = subdomains[d] && subdomains[d].length > 0 ? 'Tamamlandı' : (loading[d] ? 'Taranıyor...' : 'Bekliyor');
-                const statusClass = subdomains[d] && subdomains[d].length > 0 ? 'success' : (loading[d] ? 'loading' : 'pending');
-                
-                return (
-                  <li 
-                    key={idx} 
-                    className={`domain-item clickable ${isSelected ? 'active' : ''}`}
-                    onClick={() => handleDomainClick(d)}
-                  >
-                    <div className="domain-info-group">
-                      <span className="domain-icon" aria-hidden="true"></span>
-                      <div className="domain-copy">
-                        <span className="domain-text">{d}</span>
-                        <span className={`status-badge ${statusClass}`}>{status}</span>
-                      </div>
-                    </div>
-                    <div className="domain-actions-group">
-                      <button 
-                        className="delete-btn" 
-                        onClick={(e) => handleDeleteDomain(d, e)}
-                        title="Sil"
-                      >
-                        <svg xmlns="http://www.w3.org/0000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-        
-        <div className="sidebar-footer">
-          <div className="user-info-small">
-            <span className="user-email-truncate" title={loggedInUser || ''}>{loggedInUser}</span>
-          </div>
-          <button className="btn-text" onClick={handleLogout} disabled={authBusy}>
-            <svg xmlns="http://www.w3.org/0000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            Çıkış Yap
-          </button>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        <header className="topbar">
-          <div className="welcome-text">
-            <span className="system-kicker"><i></i> Keşif konsolu çevrimiçi</span>
-            <h2>Varlık görünürlüğünü tek yüzeyde topla</h2>
-            <p>Pasif kaynakları, DNS doğrulamasını ve servis güvenliğini aynı hedef akışında inceleyin.</p>
-          </div>
-          <div className="user-profile" title={loggedInUser || ''}>
-            <div className="avatar">{loggedInUser ? loggedInUser.charAt(0).toUpperCase() : 'U'}</div>
-          </div>
-        </header>
-
-        <div className="content-area">
-          <div className="card input-card">
-            <div className="header" style={{ textAlign: 'left' }}>
-              <h3>Yeni Hedef Domain Ekle</h3>
-              <p>Subdomain taraması ve analiz için şirketin ana alan adını girin.</p>
-            </div>
-            
-            <form onSubmit={handleAddDomain} className="domain-form">
-              <div className="form-group mb-0 flex-grow">
-                <div className="domain-prefix">
-                  <span className="prefix">https://</span>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    placeholder="sirketadi.com"
-                    value={domainInput}
-                    onChange={(e) => setDomainInput(e.target.value)}
-                  />
-                </div>
-              </div>
-              <button type="submit" className="btn btn-inline" disabled={!isDomainValid}>
-                <svg xmlns="http://www.w3.org/0000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Listeye Ekle
-              </button>
-            </form>
-          </div>
-
-          <section className="phase-status-card" aria-labelledby="phase-status-title">
-            <div>
-              <p className="phase-status-eyebrow">Geliştirme durumu</p>
-              <h3 id="phase-status-title">Platform güncellemeleri</h3>
-            </div>
-            <ol className="phase-status-list">
-              <li className="phase-status-item is-complete">
-                <span className="phase-status-icon" aria-hidden="true">✓</span>
-                <span><strong>Faz 0 tamamlandı</strong><small>Dizin yapısı ve repo hijyeni</small></span>
-              </li>
-              <li className="phase-status-item is-complete">
-                <span className="phase-status-icon" aria-hidden="true">✓</span>
-                <span><strong>Faz 1 tamamlandı</strong><small>Backend modülerleştirme</small></span>
-              </li>
-              <li className="phase-status-item is-complete">
-                <span className="phase-status-icon" aria-hidden="true">✓</span>
-                <span><strong>Faz 2 tamamlandı</strong><small>Eşzamanlılık havuzu ve SSRF koruması</small></span>
-              </li>
-              <li className="phase-status-item is-complete">
-                <span className="phase-status-icon" aria-hidden="true">✓</span>
-                <span><strong>Faz 3 tamamlandı</strong><small>DNS doğrulama ve wildcard tespiti</small></span>
-              </li>
-              <li className="phase-status-item is-complete">
-                <span className="phase-status-icon" aria-hidden="true">✓</span>
-                <span><strong>Faz 4 tamamlandı</strong><small>Kaynak mimarisi ve yeni keşif kaynakları</small></span>
-              </li>
-              <li className="phase-status-item is-complete">
-                <span className="phase-status-icon" aria-hidden="true">✓</span>
-                <span><strong>Faz 5 tamamlandı</strong><small>Orkestrasyon, DNS doğrulama ve brute-force</small></span>
-              </li>
-            </ol>
-            <p className="phase-status-next">Aktif yetenek: çok kaynaklı keşif → DNS → güvenlik analizi</p>
-          </section>
-
-          {!selectedDomain ? (
-            <div className="awaiting-state">
-              <div className="radar-mark" aria-hidden="true">
-                <span></span><span></span><span></span>
-                <svg viewBox="0 0 80 80" fill="none">
-                  <circle cx="35" cy="35" r="14" stroke="currentColor" strokeWidth="1.5" />
-                  <line x1="46" y1="46" x2="62" y2="62" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                </svg>
-              </div>
-              <p className="awaiting-kicker">Hedef bekleniyor</p>
-              <h2>Keşif yüzeyini başlatın</h2>
-              <p>Üstteki komut alanından bir domain ekleyin. Hedef soldaki listede görünür; seçtiğinizde pasif keşif ve güvenlik analizi başlar.</p>
-              <div className="example-domains" aria-label="Örnek domainler">
-                {['example.com', 'iana.org', 'github.com'].map(example => (
-                  <button key={example} type="button" onClick={() => setDomainInput(example)}>{example}</button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="card results-card fade-in">
-              <div className="results-header">
-                <div className="target-heading">
-                  <span className="target-label">Aktif hedef</span>
-                  <h3>{selectedDomain}</h3>
-                  <span className="target-signal"><i></i> İzleniyor</span>
-                </div>
-                <div className="results-actions">
-                  {subdomains[selectedDomain] && <span className="results-stats-badge">{subdomains[selectedDomain].length} varlık</span>}
-                  
-                  {subdomains[selectedDomain] && subdomains[selectedDomain].length > 0 && (
-                    <div className="analysis-action-group" aria-label="Hedef analiz işlemleri">
-                      <button
-                        className={`btn btn-secondary analysis-action ${serviceScanRunning ? 'is-cancel is-running' : ''}`}
-                        aria-busy={serviceScanRunning}
-                        onClick={handleAnalyzeAll}
-                        disabled={activeRun?.running}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
-                        {serviceScanRunning
-                          ? `Taramayı iptal et (${activeServiceRun?.completed || 0}/${activeServiceRun?.total || 0})`
-                          : automaticStage === 'waiting-services' && automaticStartsAt !== undefined
-                            ? `Servisleri tara (${autoCountdown} sn)` : 'Servisleri tara'}
-                      </button>
-                      <button
-                        className={`btn btn-advanced analysis-action ${activeRun?.running ? 'is-running is-cancel' : ''}`}
-                        aria-busy={Boolean(activeRun?.running)}
-                        onClick={handleAdvancedAnalysis}
-                        disabled={serviceScanRunning && !activeRun?.running}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
-                        {activeRun?.running ? 'Analizi iptal et' :
-                          automaticStage === 'waiting-advanced' && automaticStartsAt !== undefined
-                            ? `Tam kapsamlı analiz (${autoCountdown} sn)` : 'Tam kapsamlı analiz'}
-                      </button>
-                      <button
-                        className="btn btn-secondary analysis-action"
-                        onClick={handleGenerateScope}
-                        disabled={!hasServiceResults || serviceScanRunning}
-                        title={!hasServiceResults ? 'Kapsam oluşturmak için önce servisleri tarayın' : 'Aktif web sunucularından kapsam oluştur'}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>
-                        Kapsam oluştur
-                      </button>
-                    </div>
-                  )}
-
-                  <button 
-                    className="btn-text refresh-action"
-                    onClick={() => fetchSubdomains(selectedDomain, true)}
-                    title="Yenile"
-                    aria-label="Hedef verilerini yenile"
-                  >
-                    <svg xmlns="http://www.w3.org/0000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                  </button>
-                </div>
-              </div>
-
-              {showScanCompletions && (
-                <section className="scan-completion-summary" aria-live="polite">
-                  {(activeServiceRun?.stage === 'Servis Taraması Tamamlandı' || activeServiceRun?.stage === 'Servis Taraması Kısmen Tamamlandı') && (
-                    <div className="scan-completion-row">
-                      <span>{activeServiceRun.stage}</span>
-                      {activeServiceRun.error && <small>{activeServiceRun.error}</small>}
-                    </div>
-                  )}
-                  {activeRun?.running && (
-                    <div className="scan-completion-row is-running">
-                      <span>Kapsamlı tarama devam ediyor{activeRun.stage ? ` · ${activeRun.stage}` : ''}</span>
-                      {activeRun.total > 0 && <small>{activeRun.completed}/{activeRun.total} hedef işlendi</small>}
-                    </div>
-                  )}
-                  {!activeRun?.running && (activeRun?.stage === 'Kapsamlı Analiz Tamamlandı' || activeRun?.stage === 'Kapsamlı Analiz Kısmen Tamamlandı') && (
-                    <div className="scan-completion-row">
-                      <span>Kapsamlı Analiz Tamamlandı</span>
-                      {activeRun.error && <small>{activeRun.error}</small>}
-                    </div>
-                  )}
-                  {activeRun?.stage.startsWith('Analiz durdu') && (
-                    <div className="scan-completion-row has-error">
-                      <span>{activeRun.stage}</span>
-                      {activeRun.error && <small>{activeRun.error}</small>}
-                    </div>
-                  )}
-                </section>
-              )}
-              {selectedSubdomainsReady && (automaticStage === 'waiting-services' || automaticStage === 'waiting-advanced') && (
-                <p className="auto-analysis-status" role="status">
-                  {automaticStage === 'waiting-services' ? 'Servis taraması' : 'Tam kapsamlı analiz'} {autoCountdown} saniye sonra otomatik başlayacak.
-                </p>
-              )}
-              {(activeMeta || activeRun || activeServiceRun) && (
-                <section className="intel-strip" aria-live="polite">
-                  <div className="intel-stat"><span>Kaynaklar</span><strong>{healthySources}<small>/{activeMeta?.sources.length || 0}</small></strong></div>
-                  <div className="intel-stat"><span>DNS canlı</span><strong>{liveCount}</strong></div>
-                  <div className="intel-stat"><span>Bekleyen</span><strong>{unknownCount}</strong></div>
-                  <div className="intel-stat"><span>Brute keşfi</span><strong>{activeMeta?.bruteSkipped === 'wildcard' ? 'Atlandı' : (activeMeta?.bruteCount ?? '—')}</strong></div>
-                  <div className={`intel-state ${activeRun?.running || activeServiceRun?.running ? 'is-running' : ''}`}>
-                    <span>{activeRun?.running
-                      ? activeRun.stage
-                      : activeServiceRun?.running
-                        ? activeServiceRun.stage
-                        : automaticStage === 'waiting-advanced'
-                          ? activeServiceRun?.stage
-                          : activeRun?.stage || activeServiceRun?.stage || (activeMeta?.wildcard.isWildcard ? 'Wildcard algılandı' : 'Pasif keşif hazır')}</span>
-                    {activeRun?.running && activeRun.total > 0 ? <strong>{activeRun.completed}/{activeRun.total}</strong> :
-                      activeServiceRun?.running && activeServiceRun.total > 0 ? <strong>{activeServiceRun.completed}/{activeServiceRun.total}</strong> : null}
-                    <div className="signal-track"><i style={{ width: activeRun?.running && activeRun.total
-                      ? `${Math.max(4, (activeRun.completed / activeRun.total) * 100)}%`
-                      : activeServiceRun?.running && activeServiceRun.total
-                        ? `${Math.max(4, (activeServiceRun.completed / activeServiceRun.total) * 100)}%`
-                        : '100%' }}></i></div>
-                  </div>
-                </section>
-              )}
-              
-              <div className="results-content">
-                {generatedScopes[selectedDomain] !== undefined && (
-                  <section className="scope-output-box fade-in" aria-labelledby="generated-scope-title">
-                    <div className="scope-header">
-                      <h4 id="generated-scope-title">Geçerli OSINT Kapsamı</h4>
-                      <button className="btn-text btn-small" onClick={() => {
-                        void navigator.clipboard.writeText(scopeOutput)
-                          .then(() => setScopeCopyMessage('Kapsam kopyalandı.'))
-                          .catch(() => setScopeCopyMessage('Kopyalanamadı; metni seçerek kopyalayabilirsiniz.'));
-                      }}>Kopyala</button>
-                    </div>
-                    <p className="scope-desc">Aktif web servisi doğrulanan hedefler. Kapsam bu alan adı için otomatik kaydedilir.</p>
-                    <textarea aria-label="Oluşturulan OSINT kapsamı" className="form-input scope-textarea" readOnly
-                      value={scopeOutput} placeholder="Erişilebilir web servisi bulunamadığı için kapsam boş." />
-                    {scopeCopyMessage && <p role="status" className="scope-desc">{scopeCopyMessage}</p>}
-                  </section>
-                )}
-                {loading[selectedDomain] ? (
-                  <div className="loading-state">
-                    {wakingUp[selectedDomain] ? (
-                        <div className="wakeup-container">
-                            <div className="wakeup-radar" role="img" aria-label="Sistem hazırlanıyor; radar animasyonu">
-                                <div className="radar-grid" aria-hidden="true">
-                                    <span className="radar-ring radar-ring-inner" />
-                                    <span className="radar-ring radar-ring-middle" />
-                                    <span className="radar-axis radar-axis-horizontal" />
-                                    <span className="radar-axis radar-axis-vertical" />
-                                    <span className="radar-sweep" />
-                                    <span className="radar-dot radar-dot-one" />
-                                    <span className="radar-dot radar-dot-two" />
-                                    <span className="radar-dot radar-dot-three" />
-                                </div>
-                                <span className="radar-domain">{selectedDomain}</span>
-                            </div>
-                            <h4>Bilgi toplama sistemi hazırlanıyor</h4>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="spinner"></div>
-                            <p>Sertifika, pasif DNS ve tehdit istihbaratı kaynakları taranıyor...</p>
-                        </>
-                    )}
-                  </div>
-                ) : error[selectedDomain] ? (
-                  <div className="error-state">
-                    <svg xmlns="http://www.w3.org/0000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    <p>{error[selectedDomain]}</p>
-                    <button className="btn btn-inline" onClick={() => fetchSubdomains(selectedDomain, true)}>Tekrar Dene</button>
-                  </div>
-                ) : subdomains[selectedDomain] && subdomains[selectedDomain].length > 0 ? (
-                  <>
-                    <div className="result-section-heading">
-                      <div>
-                        <span>Servis keşfi</span>
-                        <h4>Ağ ve uygulama yüzeyi</h4>
-                      </div>
-                      <p>IP adresleri, web portları, HTTP yanıtları ve tespit edilen teknolojiler.</p>
-                    </div>
-                    <div className="subdomain-list">
-                      {subdomains[selectedDomain].map((item, idx) => {
-                        // Geriye dönük uyumluluk: Eski localStorage verisi string dizisi olabilir
-                        const isLegacyString = typeof item === 'string';
-                        const sub = isLegacyString ? (item as string) : item.subdomain;
-                        const source = isLegacyString ? 'crt.sh' : item.source;
-                        const itemIp = isLegacyString ? undefined : item.ip;
-                        
-                        const detail = subdomainDetails[sub];
-
-                        let sourceBadgeClass = 'source-crt';
-                        const sourceLabel = source || 'Pasif kaynak';
-                        if (source === 'HackerTarget') sourceBadgeClass = 'source-ht';
-                        else if (source && source.includes('+')) sourceBadgeClass = 'source-both';
-                        else if (!isLegacyString && (item.discoveredBy === 'brute' || item.discoveredBy === 'permutation')) sourceBadgeClass = 'source-brute';
-
-                        return (
-                          <div key={idx} className="subdomain-item-detailed">
-                            <div className="sub-header-row">
-                                <div className="sub-main-info">
-                                  <svg xmlns="http://www.w3.org/0000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="subdomain-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-                                  <a href={`https://${sub}`} target="_blank" rel="noopener noreferrer">{sub}</a>
-                                </div>
-                                <div className="sub-badges">
-                                  {!isLegacyString && item.status && <span className={`dns-badge dns-${item.status}`}>{item.status}</span>}
-                                  <span className={`source-badge ${sourceBadgeClass}`} title={sourceLabel}>{sourceLabel}</span>
-                                </div>
-                            </div>
-                            
-                            <div className="sub-details">
-                              {(detail?.analyzing || detail?.techAnalyzing) ? (
-                                  <span className="analyzing-text">45 portta servisler kontrol ediliyor...</span>
-                              ) : detail ? (
-                                  <div className="detail-rows">
-                                    <div className="detail-row">
-                                      <span className="ip-badge">{detail.ip || itemIp || 'DNS Çözülemedi'}</span>
-                                    </div>
-                                    
-                                    {detail.ports && detail.ports.length > 0 ? (
-                                      <div className="ports-container">
-                                          {detail.ports.map((p, pIdx) => {
-                                              let statusBadgeClass = 'status-badge-gray';
-                                              if (p.status === 200 || p.status === 201) statusBadgeClass = 'status-badge-green';
-                                              else if (p.verificationSource === 'browser') statusBadgeClass = 'status-badge-green';
-                                              else if (String(p.status).startsWith('3')) statusBadgeClass = 'status-badge-blue';
-                                              else if (String(p.status).startsWith('4') || String(p.status).startsWith('5')) statusBadgeClass = 'status-badge-red';
-                                              else if (String(p.status).includes('Açık') || String(p.status).includes('Yanıtı')) statusBadgeClass = 'status-badge-green';
-                                              else statusBadgeClass = 'status-badge-gray';
-
-                                              const isWebPort = p.isWeb ?? (p.protocol === 'http:' || p.protocol === 'https:');
-                                              const scheme = p.protocol === 'https:' ? 'https' : 'http';
-                                              const portStr = (scheme === 'https' && p.port === 443) || (scheme === 'http' && p.port === 80) ? '' : `:${p.port}`;
-                                              const targetUrl = isWebPort ? `${scheme}://${sub}${portStr}` : undefined;
-                                              const verificationLabel = p.verificationSource === 'browser' ? ' · Kullanıcının tarayıcısından doğrulandı' :
-                                                p.verificationSource === 'browserless' ? ' · Browserless canlı doğrulamasıyla doğrulandı' :
-                                                  p.verificationSource === 'render' ? ' · Render canlı GET ile doğrulandı' : '';
-                                              const title = `${p.service || 'Servis'} · ${(p.transport || 'tcp').toUpperCase()} · ${p.status}${verificationLabel}`;
-
-                                              const content = <>
-                                                <span className="port-number">:{p.port}/{p.transport || 'tcp'}</span>
-                                                <span className={`status-badge-detailed ${statusBadgeClass}`}>{p.status}</span>
-                                              </>;
-
-                                              return targetUrl ? (
-                                                  <a
-                                                      key={pIdx} 
-                                                      href={targetUrl} 
-                                                      target="_blank" 
-                                                      rel="noopener noreferrer" 
-                                                      className="port-badge-group clickable-port"
-                                                      title={`${title} · ${targetUrl} adresine git`}
-                                                  >
-                                                      {content}
-                                                  </a>
-                                              ) : (
-                                                  <span key={pIdx} className="port-badge-group" title={title}>
-                                                    {content}
-                                                  </span>
-                                              );
-                                          })}
-                                      </div>
-                                    ) : (
-                                        <span className="no-ports-text">{detail.serviceError || 'Taranan 45 portta açık servis bulunamadı'}</span>
-                                        )}
-
-                                  </div>
-                              ) : (
-                                  <button className="btn-text btn-small" onClick={() => handleAnalyzeSubdomain(sub)}>
-                                    Web Servisi Kontrolü
-                                  </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    
-                    <div className="scope-section">
-                        {activeServiceRun?.error && <div className="operation-error">{activeServiceRun.error}</div>}
-                        {activeRun?.error && <div className="operation-error">{activeRun.error}</div>}
-
-                        {activeMeta?.sources.length ? (
-                          <div className="source-matrix">
-                            <div className="source-matrix-heading">
-                              <div><span>Keşif ağı</span><strong>{activeMeta.sources.length} bağlı kaynak</strong></div>
-                              <small>{activeMeta.truncatedValidation ? 'İlk 150 kayıt doğrulandı; kalanlar bekliyor.' : 'DNS doğrulaması güncel.'}</small>
-                            </div>
-                            <div className="source-chips">
-                              {activeMeta.sources.map(sourceItem => (
-                                <span key={sourceItem.id} className={`source-chip ${sourceItem.ok ? 'is-ok' : 'is-muted'}`} title={`${sourceItem.ms} ms`}>
-                                  <i></i>{sourceItem.label}<b>{sourceItem.ok ? sourceItem.count : (sourceItem.skipped || 'bekliyor')}</b>
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {hasAdvancedResults && (
-                          <section className="comprehensive-analysis fade-in" aria-labelledby="comprehensive-analysis-title">
-                            <div className="comprehensive-heading">
-                              <div>
-                                <span>Güvenlik değerlendirmesi</span>
-                                <h4 id="comprehensive-analysis-title">Tam kapsamlı analiz</h4>
-                              </div>
-                              <p>HTTP header güvenliği, SSL durumu, WAF ve e-posta kontrolleri tek görünümde.</p>
-                            </div>
-
-                            <div className="security-metrics" aria-label="Güvenlik analizi özeti">
-                              <div className="security-metric">
-                                <span>Analiz edilen</span>
-                                <strong>{advancedAnalyzedCount}<small>/{selectedResults.length}</small></strong>
-                              </div>
-                              <div className="security-metric security-metric-score">
-                                <span>Header ortalaması</span>
-                                <strong>{averageHeaderScore ?? '—'}<small>{averageHeaderScore !== null ? '/100' : ''}</small></strong>
-                                <i><b style={{ width: `${averageHeaderScore ?? 0}%` }}></b></i>
-                              </div>
-                              <div className="security-metric">
-                                <span>Geçerli SSL</span>
-                                <strong>{validSslCount}</strong>
-                              </div>
-                              <div className="security-metric">
-                                <span>WAF bulunan</span>
-                                <strong>{wafCount}</strong>
-                              </div>
-                            </div>
-
-                        {emailSecurity[selectedDomain] && (
-                            <div className="email-security-box fade-in">
-                                <h4>E-Posta Güvenlik Skoru ({selectedDomain}) <span className={`grade-badge grade-${emailSecurity[selectedDomain].grade}`}>{emailSecurity[selectedDomain].grade}</span></h4>
-                                <div className="email-sec-grid">
-                                    <div className="email-sec-item">
-                                        <strong>SPF:</strong> {emailSecurity[selectedDomain].spf.hasRecord ? '✅ Var' : '❌ Yok'} 
-                                        {emailSecurity[selectedDomain].spf.hasRecord && (emailSecurity[selectedDomain].spf.hasMinusAll ? ' (Hard Fail)' : ' (Soft Fail/None)')}
-                                    </div>
-                                    <div className="email-sec-item">
-                                        <strong>DMARC:</strong> {emailSecurity[selectedDomain].dmarc.hasRecord ? '✅ Var' : '❌ Yok'} 
-                                        {emailSecurity[selectedDomain].dmarc.hasRecord && ` (Policy: ${emailSecurity[selectedDomain].dmarc.policy})`}
-                                    </div>
-                                    <div className="email-sec-item">
-                                        <strong>DKIM:</strong> {emailSecurity[selectedDomain].dkim.hasRecord ? '✅ Var (Standart)' : '❌ Standart Bulunamadı'}
-                                    </div>
-                                </div>
-                                <p className="email-sec-desc">E-posta sahteciliği (Phishing) risklerine karşı ana alan adı analizidir.</p>
-                            </div>
-                        )}
-
-                        {/* ADVANCED SUMMARY TABLE */}
-                        {subdomains[selectedDomain] && subdomains[selectedDomain].some(item => {
-                            const sub = typeof item === 'string' ? (item as string) : item.subdomain;
-                            const detail = subdomainDetails[sub];
-                            return hasSecurityDetail(detail);
-                        }) && (
-                            <div className="advanced-summary-box fade-in">
-                                <div className="advanced-table-heading">
-                                  <h5>Subdomain güvenlik detayları</h5>
-                                  <span>{securityDetailCount} sonuç</span>
-                                </div>
-                                <div className="table-responsive">
-                                    <table className="summary-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Subdomain</th>
-                                                <th className="col-ssl-score">SSL Skoru</th>
-                                                <th>Sertifika</th>
-                                                <th>HTTP Yanıt Profili</th>
-                                                <th>Eksik Headerlar</th>
-                                                <th className="col-waf" title="WAF Koruması">WAF</th>
-                                                <th className="col-tech-stack" title="Teknoloji Yığını">TEKNOLOJİ</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {subdomains[selectedDomain].map((item, idx) => {
-                                                const sub = typeof item === 'string' ? (item as string) : item.subdomain;
-                                                const detail = subdomainDetails[sub];
-                                                
-                                                if (!detail || !hasSecurityDetail(detail)) return null;
-                                                const browserVerified = isBrowserVerified(detail);
-                                                const browserlessVerified = detail.evidence?.source === 'browserless-live' || detail.tlsVerification?.source === 'browserless-live';
-                                                const visibleTechnologies = (detail.technologies || []).filter(tech =>
-                                                  tech.category !== 'CDN' && !(detail.waf?.detected && /cloudflare/i.test(detail.waf.name || '') && /cloudflare/i.test(tech.name))
-                                                );
-                                                const httpPortResults = (detail.ports || []).filter((port): port is PortInfo & { status: number; protocol: 'http:' | 'https:' } =>
-                                                  typeof port.status === 'number' && (port.protocol === 'http:' || port.protocol === 'https:')
-                                                );
-                                                const serviceHttpProfile = httpPortResults.find(port => port.protocol === 'https:') || httpPortResults[0];
-                                                const profileStatus = detail.evidence?.status ?? serviceHttpProfile?.status;
-                                                const profileProtocol = detail.evidence?.protocol ?? serviceHttpProfile?.protocol;
-                                                const hasHttpProfile = Boolean(detail.evidence || serviceHttpProfile);
-
-                                                return (
-                                                    <tr key={idx}>
-                                                        <td className="col-subdomain">
-                                                          {sub}
-                                                          {detail.advancedError && <small className="operation-error">{detail.advancedError}</small>}
-                                                          {detail.evidence?.externalRedirect?.target && <small className="passive-source-label" title="Son hedefin bulguları ilk hedefin puanına dahil edilmez">↳ Dış yönlendirme: {detail.evidence.externalRedirect.target}</small>}
-                                                        </td>
-                                                        <td className="col-ssl-score">
-                                                            {detail.advancedAnalyzing ? <AnalysisWaitIndicator /> :
-                                                             detail.ssl ? (
-                                                               <div className="ssl-summary">
-                                                                 <span className={`grade-badge grade-${detail.ssl.grade}`}>{detail.ssl.grade}</span>
-                                                                 {detail.ssl.protocol && <small>{detail.ssl.protocol}</small>}
-                                                                 {(detail.ssl.legacyProtocols?.tls10 === 'yes' || detail.ssl.legacyProtocols?.tls11 === 'yes') && <small className="ssl-warning">Eski TLS</small>}
-                                                               </div>
-                                                             ) : <span className="text-muted">{browserlessVerified ? 'TLS doğrulandı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
-                                                        </td>
-                                                        <td className="col-cert">
-                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.ssl ? (
-                                                                <div className="cert-summary">
-                                                                  <span className={detail.ssl.valid ? 'text-success' : 'text-error'}>
-                                                                      {detail.ssl.valid ? `Geçerli · ${detail.ssl.daysLeft ?? '—'}g` : 'Geçersiz'}
-                                                                  </span>
-                                                                  {detail.ssl.issuer && <small title={detail.ssl.issuer}>{detail.ssl.issuer}</small>}
-                                                                  <small className={detail.ssl.hostnameMatch === false || detail.ssl.chainComplete === false ? 'ssl-warning' : ''}>
-                                                                    {detail.ssl.hostnameMatch === false ? 'Host eşleşmedi' : detail.ssl.chainComplete === false ? 'Zincir eksik' : 'Host eşleşti · Zincir tamam'}
-                                                                  </small>
-                                                                </div>
-                                                            ) : browserlessVerified ? <span className="text-success">Browserless üzerinden doğrulandı</span> : browserVerified ? <span className="text-success">Tarayıcıdan doğrulandı</span> : <span className="text-muted">-</span>}
-                                                        </td>
-                                                        <td className="col-http-profile">
-                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
-                                                             hasHttpProfile ? (
-                                                               <div className="http-profile">
-                                                                 <span className={`http-status http-status-${httpStatusTone(profileStatus)}`}>
-                                                                   {profileStatus ?? '—'} <small>{httpStatusLabel(profileStatus)}</small>
-                                                                 </span>
-                                                                 <span>{profileProtocol === 'https:' ? 'HTTPS' : profileProtocol === 'http:' ? 'HTTP' : 'Protokol bilinmiyor'}{!detail.evidence && serviceHttpProfile ? ` · :${serviceHttpProfile.port}` : ''}</span>
-                                                                 <span>{detail.evidence ? (detail.evidence.source === 'browserless-live' ? 'Browserless canlı' : 'Render canlı') : 'Servis taraması'}</span>
-                                                                 {detail.evidence?.redirectCount ? <span>↳ {detail.evidence.redirectCount} yönlendirme</span> : null}
-                                                                 {detail.evidence?.server ? <span className="http-server">{detail.evidence.server}</span> : null}
-                                                               </div>
-                                                             ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
-                                                        </td>
-                                                        <td className="col-missing">
-                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> : detail.security?.missing ? (
-                                                                <div className="missing-list-inline">
-                                                                    {[...new Set(detail.security.missing as string[])].map((missingHeader) => (
-                                                                        <span key={missingHeader} className="missing-tag">{missingHeader}</span>
-                                                                    ))}
-                                                                </div>
-                                                            ) : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
-                                                        </td>
-                                                        <td className="col-waf">
-                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
-                                                             detail.waf?.detected ? <span className="cf-badge" style={{ margin: 0 }}>{detail.waf.name}</span> :
-                                                             detail.waf ? <span className="badge-none">Korumasız</span> : <span className="text-muted">{browserlessVerified ? 'Okunamadı' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : '-'}</span>}
-                                                        </td>
-                                                        <td className="col-tech-stack">
-                                                            {detail.advancedAnalyzing ? <span className="analysis-wait-copy">Bekleniyor</span> :
-                                                              visibleTechnologies.length > 0 ? (
-                                                                <div className="tech-stack-list">
-                                                                  {visibleTechnologies.slice(0, 6).map((tech, techIdx) => {
-                                                                    const label = `${tech.name}${tech.version ? ` ${tech.version}` : ''}`;
-                                                                    const source = tech.passive ? 'Pasif Shodan gözlemi' : `${tech.confidence ?? '—'}% güven · ${(tech.sources || []).join(', ')}`;
-                                                                    return <span key={techIdx} className={`tech-badge ${tech.passive ? 'tech-passive' : 'tech-gray'}`} title={`${tech.category} · ${source}`}>{label}</span>;
-                                                                  })}
-                                                                </div>
-                                                              ) : <span className="text-muted">{browserlessVerified ? 'Tespit yok' : browserVerified ? (detail.browserlessError ? 'Browserless erişemedi' : 'Render erişemedi') : 'Tespit yok'}</span>}
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                          </section>
-                        )}
-
-                    </div>
-                  </>
-                ) : (
-                  <div className="empty-state">
-                    <p>Bu alan adı için herhangi bir kayıt bulunamadı veya henüz tarama yapılmadı.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </main>
-      <footer className="statusbar" aria-live="polite">
-        <span className={selectedDomain ? 'is-active' : ''}><i></i>{selectedDomain ? 'ACTIVE' : 'IDLE'}</span>
-        <b></b>
-        <span>{domains.length} hedef kayıtlı</span>
-        <span className="statusbar-build">BUSIBER OSINT · CORE v2.4.1</span>
-      </footer>
-    </div>
+      <ConsoleShell>{views[route.view]}</ConsoleShell>
+    </ConsoleContext.Provider>
   );
 }
 
