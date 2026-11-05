@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**osint** (branded "BUSIBER OSINT Platform") — a passive OSINT tool that enumerates a target company's subdomains and profiles the web services running on them. Live at https://osint-2pq.pages.dev/.
+**ATSUR** ("at sürenindir"; formerly branded "BUSIBER OSINT") — a passive OSINT console that enumerates a target company's subdomains, profiles the services running on them, derives findings, and can have an LLM comment on the results. Live at https://osint.busiber.workers.dev/.
 
 ## Commands
 
@@ -12,47 +12,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Frontend (repo root)
 npm install
 npm run dev        # Vite dev server -> http://localhost:5173/
-npm run build      # tsc -b (typecheck) then vite build
-npm run lint
+npm run build      # tsc -b (typecheck, includes tsconfig.test.json) then vite build
+npm run lint       # note: pre-existing errors remain in some server/lib files
+npm test           # node --test --import tsx src/lib/*.test.ts
 npm run preview
 
 # Backend (server/) — separate package, install separately
 cd server
 npm install
-npm start          # tsx index.ts -> http://localhost:3001
+npm start          # tsx index.ts -> http://localhost:3001 (needs OSINT_LOGIN_EMAIL + OSINT_LOGIN_PASSWORD_HASH)
+npm test           # node --test --import tsx (all server/**/*.test.ts)
 ```
 
-Run both together for local work. There is no test runner and no tests (`server`'s `test` script is the npm placeholder that exits 1).
-
-**Local dev gotcha:** `vite.config.ts` proxies `/api` to `localhost:3001`, but that proxy only takes effect when `VITE_API_URL` is empty. `.env` sets `VITE_API_URL` to the deployed Render URL, so by default `npm run dev` talks to the *production* backend (which cold-starts, ~40s) and ignores your local server. Clear or comment out that variable to exercise the local backend.
+Local dev: `API_BASE_URL` is `''` in production builds and `VITE_API_URL || ''` in dev; with it empty, Vite proxies `/api` to `localhost:3001`. A local `.env` (gitignored) may set `VITE_API_URL` to a remote backend — clear it to use the local server.
 
 ## Architecture
 
-Two independently deployed halves, no shared code, no database.
+Three deployable pieces: the Vite SPA (`src/`), a Cloudflare Worker (`worker/index.ts`, `wrangler.jsonc`) that serves `dist/` and reverse-proxies `/api/*` and `/health` to the Render backend, and the Express backend (`server/`). `shared/scanPorts.ts` (the 45 scanned ports) is imported by the backend. No database.
 
-**Frontend** — `src/App.tsx` is the entire app (~880 lines): auth screens, dashboard, scan orchestration, and rendering all in one component; `src/index.css` (~1080 lines) is the entire stylesheet. There is no router and no component library — adding a feature usually means extending `App.tsx` and `index.css`.
+### Frontend (`src/`)
 
-- `base: '/'` — served from the root of its domain.
-- `API_BASE_URL = import.meta.env.VITE_API_URL || ''` — empty string makes calls relative so the Vite dev proxy can pick them up.
-- "Auth" is `localStorage` only (key `osint_users`), storing passwords in plaintext next to each user's domains and scan caches (`subdomainsCache`, `subdomainDetailsCache`, `emailSecCache`). No server-side accounts or sessions exist. Old records may hold subdomains as plain strings instead of objects; the code carries explicit legacy-string fallbacks — preserve them when touching that data.
-- The scan flow is progressive: `/api/scan` first, then per-subdomain `/api/analyze`, `/api/tech`, and `/api/advanced` fire independently and fill in the table as they resolve, each tracked by its own `analyzing` / `techAnalyzing` / `advancedAnalyzing` flag.
-- A `wakingUp` state drives the "server is waking up" progress animation for Render's cold start.
-- "Generate scope" (`handleGenerateScope`) produces a comma-separated pentest scope list: it drops mail/DNS hostnames by prefix (`mail.`, `webmail.`, `smtp.`, `ns1.`, `mx.`, …) and keeps only subdomains that returned an HTTP status from an open port.
+- `App.tsx` owns **all state and orchestration**: auth/session, domain list, scan flows (`fetchSubdomains`, `handleAnalyzeSubdomain`, `handleAnalyzeAll`, `handleAdvancedAnalysis`), the auto-analysis countdown state machine, abort refs, scope generation and localStorage persistence. It renders the login screen or `<ConsoleShell>` and exposes everything to pages through `ConsoleContext` (`src/lib/console.ts`, read with `useConsole()`). Keep timing/abort logic in App; pages only read context and call `actions`.
+- Pages live in `src/views/` (Dashboard, Assets + AssetDrawer, Findings, Technologies, Scope, AI, Targets). Pages that need a selected target wrap their content in `TargetGate` (no target / loading / Render wake-up / error / empty states).
+- Routing is hash-based (`src/lib/route.ts`): `#/assets?host=…&tech=…`. No router dependency.
+- `src/lib/workspace.ts` `buildWorkspace()` derives everything a page shows for the selected domain (asset rows, stats, technology inventory, findings). `src/lib/findings.ts` holds the rule-based findings (severity `high|medium|low|info`); rules only fire on measured values. Unit tests: `src/lib/findings.test.ts`.
+- `src/types.ts` mirrors backend response shapes (`SslInfo`, `SecurityInfo`, … match `server/lib/tls.ts` and `server/lib/evidence.ts`).
+- Styles: `src/index.css` (legacy, several stacked theme layers; the last `:root` block is the live token source; login, radar/wake-up and `ScopeReadyDialog` styles still come from here) plus `src/styles/console.css` for the console (`ac-` prefixed classes, uses the same tokens).
+- Persistence: `localStorage` key `osint_users` → per-email `UserData` (`domains`, `subdomainsCache` keyed by domain, `subdomainDetailsCache` keyed by **subdomain FQDN**, `emailSecCache`, `scopes`, `aiReports`). Old records may hold subdomains as plain strings; `normalizeSubdomainList` converts them on load — keep that path. View preferences (last target, AI provider) live in `atsur_prefs`.
+- `?view=design-process` renders a standalone presentation (`src/views/DesignProcessView.tsx`), unrelated to the console.
 
-**Backend** — `server/index.ts` (~520 lines, Express 5 + CORS, run with `tsx`, CommonJS). Every endpoint is `GET` and validates the target with `isValidDomain` before doing network work; hosts that resolve to private/loopback IPs are rejected by the SSRF guard (`isPrivateIp` / `getPublicHostIp`). Raw `net.Socket` connect probes and `https`/`http` HEAD requests do the scanning; `rejectUnauthorized: false` is deliberate so broken-TLS hosts still get profiled.
+### Backend (`server/`)
+
+Express 5 + CORS, run with `tsx`, CommonJS. `index.ts` wires middleware (`requireTrustedRequest` → JSON body parser → `requireAuthentication` → in-flight limiter) and routes from `server/routes/`. Auth is a single account from env (`server/AUTH_SETUP.md`), HttpOnly cookie session in memory, CSRF header on non-GET. All scan endpoints validate the target with `isValidDomain` and the SSRF guard rejects private IPs; `rejectUnauthorized: false` is deliberate so broken-TLS hosts still get profiled.
 
 | Endpoint | Purpose |
 |---|---|
-| `/api/scan?domain=` | Subdomain enumeration, merging **crt.sh** certificate transparency + **HackerTarget** hostsearch; each result is tagged with its `source` |
-| `/api/crt?q=` | Thin crt.sh passthrough proxy |
-| `/api/analyze?domain=` | Resolves IP, TCP-probes ~24 HTTP/HTTPS/panel ports (`HTTP_HTTPS_PORTS`), HEADs the open ones for status code + Cloudflare detection |
-| `/api/tech?subdomain=` | Technology fingerprinting against `TECH_SIGNATURES` (CMS / e-commerce / frontend / backend), matching response headers and HTML body regexes |
-| `/api/advanced?subdomain=` | TLS certificate info graded A–F by days-to-expiry (self-signed forces F), security-header score out of 100 graded A–E, and WAF detection (Cloudflare, Sucuri, …) |
-| `/api/email-sec?domain=` | SPF / DMARC / DKIM lookups over DNS TXT, scored and graded |
-| `/health` | Liveness check (used to wake the Render dyno) |
+| `GET /api/scan?domain=&validate=1` | Subdomain enumeration over `server/sources/*` (crt.sh, Certspotter, RapidDNS, HackerTarget, key-gated sources), wildcard detection, optional DNS validation |
+| `POST /api/brute` | Wordlist / permutation DNS discovery |
+| `GET /api/analyze?domain=` | Resolves IP, TCP-probes the 45 ports, HTTP(S)-probes web candidates |
+| `GET /api/advanced?subdomain=` | TLS (graded), security headers (score/grade/missing), WAF, cookies, technologies, live HTTP evidence |
+| `GET /api/email-sec?domain=` | SPF / DMARC / DKIM / DNSSEC / MTA-STS / CAA, scored and graded |
+| `GET /api/ai/providers`, `POST /api/ai/chat` | AI analysis; see `server/AI_SETUP.md` |
+| `/api/auth/*`, `/health`, `/api/crt`, `/api/tech`, `/api/validate`, `/api/wildcard`, `/api/sources` | auth, liveness and helpers |
 
-**Deployment** — Frontend is served from **Cloudflare Pages** (project `osint`, direct upload via `wrangler pages deploy dist`; rebuild with `VITE_API_URL=https://osint-zgg4.onrender.com` first). The backend is deployed separately on **Render.com** (Root Directory: `server`) and is *not* deployed by any repo workflow — changing `server/index.ts` requires a Render deploy to take effect in production. Render sleeps after ~15 min idle.
+AI (`server/lib/ai/`): providers are configured only by env vars (keys never reach the browser). Claude uses the official `@anthropic-ai/sdk` with `fallbacks: "default"`; ChatGPT/Gemini/OpenRouter/OpenCode use an OpenAI-compatible `/chat/completions` stream. The JSON body limit is 256 KB for `/api/ai/chat` and 16 KB elsewhere. Provider 401/403 is mapped to 502 because the frontend treats 401 as session expiry.
+
+### Deployment
+
+Frontend + Worker: `npm run build` then `wrangler deploy` (config in `wrangler.jsonc`). The backend is deployed separately on **Render.com** (Root Directory: `server`) and is not deployed by any repo workflow — server changes need a Render deploy. Render sleeps after ~15 min idle (first request ~40 s; the UI shows a wake-up radar).
 
 ## Conventions
 
-UI strings, code comments, and the README are in Turkish; commit messages are a mix of Turkish and English Conventional Commits. Match the file you are editing.
+UI strings, code comments and the README are in Turkish; commit messages are a mix of Turkish and English Conventional Commits. Match the file you are editing.

@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: BUSIBER OSINT
-description: Turkish OSINT operations console with dark surfaces and turquoise status accents.
+name: ATSUR
+description: Turkish passive OSINT console ("at sürenindir") with dark surfaces, turquoise status accents and a galloping-horse mark.
 colors:
   primary: "#00e5d4"
   background: "#080b10"
@@ -26,7 +26,13 @@ components:
 
 # Product identity
 
-This is an existing Turkish operations dashboard for domain discovery and service analysis. Preserve its dark technical console, compact data display, turquoise actions, and persistent scan completion labels. Use plain Turkish for actions and completion feedback.
+ATSUR is a Turkish operations console for domain discovery, service analysis and findings. Preserve its dark technical console, compact data display, turquoise actions, and persistent scan completion labels. Use plain Turkish for actions and completion feedback.
+
+The mark is a galloping horse silhouette (`src/components/Logo.tsx`, `public/atsur.svg`) in the primary color on a dark teal tile, next to the mono wordmark "AT**SUR**" (SUR in the primary color) and the lowercase tagline "at sürenindir".
+
+## Console structure
+
+A sticky top bar holds the brand, the active-target selector, the add-domain command field, the two scan actions and the account button. A left rail (a horizontal strip below 900 px) switches pages: Dashboard, Varlıklar, Bulgular, Teknolojiler, Kapsam, AI Analiz, and under "Yönetim" Hedefler. Pages are hash routes. Asset details open in a right-side panel next to the table, not in a modal. Severity colors: Yüksek red, Orta amber, Düşük blue, Bilgi gray; badges always carry a text label so color is never the only signal.
 
 ## Runtime ownership
 
@@ -38,7 +44,7 @@ The final `:root` parity layer in `src/index.css` is the canonical token source.
 
 Automatic scope generation uses the existing active web-service criteria in `getScopeOutput`. Completed analyses produce a dialog; cancelled or stopped analyses do not. Keep partial scan failures visible in the underlying result summary. Do not introduce decorative motion for this completion notification.
 
-Generate the scope from committed final scan results and store it per domain in the user's local cache. Display saved scopes before result rows, including empty scopes. Reselecting a domain or reloading the page must preserve its scope without requiring the manual generation button; restoring a saved scope does not replay completion notifications.
+Generate the scope from committed final scan results and store it per domain in the user's local cache. Show the saved scope on the Kapsam page and its summary on the Dashboard, including empty scopes. Reselecting a domain or reloading the page must preserve its scope without requiring the manual generation button; restoring a saved scope does not replay completion notifications.
 
 ## Authentication
 
