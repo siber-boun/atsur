@@ -27,7 +27,7 @@ function TargetSwitcher() {
         {!domain && <option value="">Hedef seçin</option>}
         {domains.map(item => <option key={item} value={item}>{item}</option>)}
       </select>
-      {state && <span className={`ac-badge t-${state === 'done' ? 'live' : state === 'scanning' ? 'redir' : 'none'}`}>{STATE_LABEL[state]}</span>}
+      {state && <span className={`ac-badge t-${state === 'done' ? 'live' : state === 'scanning' ? 'warn' : 'none'}`}>{STATE_LABEL[state]}</span>}
     </label>
   );
 }
@@ -117,7 +117,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             <button type="button" className="ac-link-btn" onClick={actions.logout} disabled={authBusy}><LogoutIcon /> Çıkış yap</button>
           </div>
         </nav>
-        <main className="ac-main" id="main">{children}</main>
+        <main className="ac-main" id="main"><div className="ac-view" key={route.view}>{children}</div></main>
       </div>
 
       <footer className="ac-statusbar" aria-live="polite">

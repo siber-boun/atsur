@@ -13,7 +13,7 @@ export function TargetGate({ children }: { children: ReactNode }) {
   if (!domain) {
     return (
       <div className="ac-awaiting">
-        <span className="ac-awaiting-mark"><HorseMark size={72} /></span>
+        <span className="ac-awaiting-mark" aria-hidden="true"><i /><i /><i /><HorseMark size={56} /></span>
         <p className="ac-eyebrow">Hedef bekleniyor</p>
         <h1 className="ac-h1">Keşif yüzeyini başlatın</h1>
         <p className="ac-note">

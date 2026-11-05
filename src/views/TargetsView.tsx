@@ -4,7 +4,7 @@ import { EmptyState, ViewHead } from '../components/ui';
 
 const STATE = {
   done: { label: 'TAMAMLANDI', tone: 'live' },
-  scanning: { label: 'TARANIYOR', tone: 'redir' },
+  scanning: { label: 'TARANIYOR', tone: 'warn' },
   pending: { label: 'BEKLİYOR', tone: 'none' }
 } as const;
 

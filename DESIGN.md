@@ -32,7 +32,21 @@ The mark is a galloping horse silhouette (`src/components/Logo.tsx`, `public/ats
 
 ## Console structure
 
-A sticky top bar holds the brand, the active-target selector, the add-domain command field, the two scan actions and the account button. A left rail (a horizontal strip below 900 px) switches pages: Dashboard, Varlıklar, Bulgular, Teknolojiler, Kapsam, AI Analiz, and under "Yönetim" Hedefler. Pages are hash routes. Asset details open in a right-side panel next to the table, not in a modal; while it is open the WAF and technology columns are hidden. Unresolved hosts sit in a collapsed group under the table. Findings use a list + detail layout: severity tiles filter, the list is grouped by severity, the detail shows description, remediation and per-host evidence. Severity colors: Yüksek red, Orta amber, Düşük blue, Bilgi gray; badges always carry a text label so color is never the only signal.
+A sticky top bar holds the brand, the active-target selector, the add-domain command field, the two scan actions and the account button. A left rail (a horizontal strip below 900 px) switches pages: Dashboard, Varlıklar, Bulgular, Teknolojiler, Kapsam, AI Analiz, and under "Yönetim" Hedefler. Pages are hash routes. Asset details open in a right-side panel next to the table, not in a modal; while it is open the WAF and technology columns are hidden. Unresolved hosts sit in a collapsed group under the table. Findings use a list + detail layout: severity tiles filter, the list is grouped by severity, the detail shows description, remediation and per-host evidence. Severity colors: Yüksek red, Orta yellow, Düşük light (main text color), Bilgi gray; badges always carry a text label so color is never the only signal.
+
+## Color = state
+
+Only the nine Figma colors plus the main text color are used (`src/styles/console.css` `--c-*` tokens); in-between tones are `color-mix()` tints of them, never new hex values. Colors describe operational state, not decoration:
+
+| Color | Meaning | Examples |
+|---|---|---|
+| Turquoise `#00e5d4` | active control, selected target, system signal | primary button, selected row/menu (`inset 2px 0`), focus ring, SİSTEM AKTİF pulse |
+| Green `#2ecc71` | successful / live result | LIVE host dot, 2xx and open TCP ports, TLS/header grade A–B, WAF present |
+| Yellow `#e3a008` | pending / warning | Orta severity, 4xx, grade C, scanning target, wildcard |
+| Red `#ff5b5b` | error / unreachable | Yüksek severity, 5xx, grade D–F, unresolved host |
+| Gray `#7d8590` | passive, secondary, unprocessed | Bilgi severity, 3xx, labels, missing data |
+
+Tinted surfaces follow one pattern: background 10% of the color, border 35%, text the color itself; gray tints have no fill so `#7d8590` stays above 4.5:1 on every surface. Corners: controls 3px, boxes 4px, dialogs 8px. Effects use the values measured from the Figma prototype: 64px work-area grid in `#21262d` at 42%, turquoise glow `0 0 8px` at 70% with a 2 s pulse on live signals, 300 ms fade on page change, 3 s radar ping on the waiting screen; all motion stops under `prefers-reduced-motion`.
 
 ## Runtime ownership
 
