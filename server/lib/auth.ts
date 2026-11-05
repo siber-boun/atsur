@@ -61,7 +61,7 @@ export function clearSessionCookie(res: Response) {
 export function requireTrustedRequest(req: Request, res: Response, next: NextFunction) {
   res.set('Cache-Control', 'no-store');
   if (req.path === '/health' || req.method === 'OPTIONS') return next();
-  const allowed = new Set(['https://osint.busiber.workers.dev', ...(process.env.CORS_ALLOWED_ORIGINS || 'https://osint-2pq.pages.dev,http://localhost:5173,http://127.0.0.1:5173').split(',').map(x => x.trim())]);
+  const allowed = new Set(['https://atsur.busiber.workers.dev', 'https://osint.busiber.workers.dev', ...(process.env.CORS_ALLOWED_ORIGINS || 'https://osint-2pq.pages.dev,http://localhost:5173,http://127.0.0.1:5173').split(',').map(x => x.trim())]);
   const origin = req.header('origin');
   if ((origin && !allowed.has(origin)) || req.header('sec-fetch-site') === 'cross-site') return res.status(403).json({ error: 'İstek kaynağı kabul edilmedi.' });
   if (!['GET', 'HEAD'].includes(req.method) && req.header('x-osint-request') !== '1') return res.status(403).json({ error: 'İstek doğrulanamadı.' });

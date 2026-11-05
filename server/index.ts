@@ -23,6 +23,7 @@ app.disable('x-powered-by');
 let inFlight = 0;
 
 const allowedOrigins = new Set([
+  'https://atsur.busiber.workers.dev',
   'https://osint.busiber.workers.dev',
   ...(process.env.CORS_ALLOWED_ORIGINS || 'https://osint-2pq.pages.dev,http://localhost:5173,http://127.0.0.1:5173')
     .split(',').map((origin) => origin.trim()).filter(Boolean)

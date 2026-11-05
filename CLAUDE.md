@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**ATSUR** (ATtack SURface; the Turkish reading "at sürenindir" is an intentional pun; formerly branded "BUSIBER OSINT") — a passive OSINT console that enumerates a target company's subdomains, profiles the services running on them, derives findings, and can have an LLM comment on the results. Live at https://osint.busiber.workers.dev/.
+**ATSUR** (ATtack SURface; the Turkish reading "at sürenindir" is an intentional pun; formerly branded "BUSIBER OSINT") — a passive OSINT console that enumerates a target company's subdomains, profiles the services running on them, derives findings, and can have an LLM comment on the results. Live at https://atsur.busiber.workers.dev/ (Worker name `atsur`; the older `osint` Worker at osint.busiber.workers.dev may still exist).
 
 ## Commands
 
@@ -59,7 +59,7 @@ AI (`server/lib/ai/`): providers are configured only by env vars (keys never rea
 
 ### Deployment
 
-Frontend + Worker: `npm run build` then `wrangler deploy` (config in `wrangler.jsonc`). The backend is deployed separately on **Render.com** (Root Directory: `server`) and is not deployed by any repo workflow — server changes need a Render deploy. Render sleeps after ~15 min idle (first request ~40 s; the UI shows a wake-up radar).
+Frontend + Worker: `npm run build` then `npx wrangler deploy` (config in `wrangler.jsonc`, Worker name `atsur` → atsur.busiber.workers.dev). Both `atsur.` and `osint.busiber.workers.dev` are in the backend origin allowlist (`server/index.ts`, `server/lib/auth.ts`). The backend is deployed separately on **Render.com** (Root Directory: `server`) and is not deployed by any repo workflow — server changes need a Render deploy. Render sleeps after ~15 min idle (first request ~40 s; the UI shows a wake-up radar).
 
 ## Conventions
 

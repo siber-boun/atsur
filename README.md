@@ -4,7 +4,7 @@
 
 ATSUR, hedef bir şirketin alan adı üzerinden pasif subdomain taraması yapan, bulunan subdomain'lerde çalışan web servislerini analiz eden ve sonuçları bulgulara dönüştüren bir Açık Kaynak İstihbarat (OSINT) konsoludur.
 
-🚀 **Canlı Uygulama:** [osint.busiber.workers.dev](https://osint.busiber.workers.dev/)
+🚀 **Canlı Uygulama:** [atsur.busiber.workers.dev](https://atsur.busiber.workers.dev/) (eski adres: osint.busiber.workers.dev)
 
 ## Arayüz
 
