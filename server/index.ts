@@ -12,6 +12,7 @@ import validateRoute from './routes/validate';
 import wildcardRoute from './routes/wildcard';
 import sourcesRoute from './routes/sources';
 import bruteRoute from './routes/brute';
+import aiRoute from './routes/ai';
 
 import authRoute from './routes/auth';
 import { validateAuthConfig, requireTrustedRequest, requireAuthentication } from './lib/auth';
@@ -31,7 +32,10 @@ app.use(cors({ origin(origin, callback) {
   callback(null, !origin || allowedOrigins.has(origin));
 } }));
 app.use(requireTrustedRequest);
-app.use(express.json({ limit: '16kb' }));
+// AI isteği tarama özetini taşıdığı için daha büyük gövde kabul eder; diğer uçlar 16 KB'de kalır.
+const smallJson = express.json({ limit: '16kb' });
+const aiJson = express.json({ limit: '256kb' });
+app.use((req, res, next) => (req.path === '/api/ai/chat' ? aiJson : smallJson)(req, res, next));
 app.use(requireAuthentication);
 app.use(authRoute);
 app.use((req, res, next) => {
@@ -67,6 +71,7 @@ app.use(validateRoute);
 app.use(wildcardRoute);
 app.use(sourcesRoute);
 app.use(bruteRoute);
+app.use(aiRoute);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
