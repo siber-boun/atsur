@@ -211,6 +211,7 @@ function App() {
 
   const handleDeleteDomain = (domainToDelete: string) => {
     setGeneratedScopes(prev => { const next = { ...prev }; delete next[domainToDelete]; return next; });
+    setAiReports(prev => { const next = { ...prev }; delete next[domainToDelete]; return next; });
     notifiedScopeRunsRef.current.delete(domainToDelete);
     
     const newDomains = domains.filter(d => d !== domainToDelete);
@@ -973,9 +974,7 @@ function App() {
     },
     ai: {
       report: selectedDomain ? aiReports[selectedDomain] : undefined,
-      saveReport: report => {
-        if (!selectedDomain) return;
-        const domain = selectedDomain;
+      saveReport: (domain, report) => {
         setAiReports(prev => {
           const next = { ...prev };
           if (report) next[domain] = report; else delete next[domain];

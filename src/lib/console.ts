@@ -46,7 +46,8 @@ export interface ConsoleValue {
   };
   ai: {
     report?: AiReport;
-    saveReport: (report: AiReport | null) => void;
+    /** Raporu başladığı hedefe yazar; hedef değişse bile doğru kayda gider. */
+    saveReport: (domain: string, report: AiReport | null) => void;
   };
   authBusy: boolean;
 }
