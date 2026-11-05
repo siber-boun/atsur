@@ -272,15 +272,21 @@ a.ac-port:hover { border-color: var(--c-accent); }
 
 /* Dar ekran: menü üstte yatay şerit olur */
 @media (max-width: 900px) {
-  .ac-rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--c-line); padding: 8px; gap: 4px; }
-  .ac-rail-h, .ac-rail-foot { display: none; }
-  .ac-nav { width: auto; flex: none; }
-  .ac-main { padding: 16px; }
+  /* Orta genişlik: menü solda kalır, biraz daralır. */
+  .ac-rail { flex: 0 0 184px; }
+  .ac-main { padding: 16px; flex-basis: 0; }
   .ac-top { position: static; }
   .ac-top-actions { margin-left: 0; width: 100%; }
   .ac-cmd { max-width: none; }
   .ac-drawer { position: static; max-height: none; }
   .ac-sys { display: none; }
+}
+/* Telefon: menü içeriğin üstünde tam genişlikte yatay şerit olur. */
+@media (max-width: 640px) {
+  .ac-rail { flex: 1 1 100%; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--c-line); padding: 8px; gap: 4px; }
+  .ac-rail-h, .ac-rail-foot { display: none; }
+  .ac-nav { width: auto; flex: none; }
+  .ac-main { flex-basis: 100%; }
 }
 @media (max-width: 480px) {
   .ac-brand-tag { display: none; }
