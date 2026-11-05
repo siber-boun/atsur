@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: ATSUR
-description: Turkish passive OSINT console ("at sürenindir") with dark surfaces, turquoise status accents and a galloping-horse mark.
+description: Turkish attack-surface console (ATSUR = ATtack SURface, read as the pun "at sürenindir") with dark surfaces, turquoise status accents and a galloping-horse mark.
 colors:
   primary: "#00e5d4"
   background: "#080b10"
@@ -28,11 +28,11 @@ components:
 
 ATSUR is a Turkish operations console for domain discovery, service analysis and findings. Preserve its dark technical console, compact data display, turquoise actions, and persistent scan completion labels. Use plain Turkish for actions and completion feedback.
 
-The mark is a galloping horse silhouette (`src/components/Logo.tsx`, `public/atsur.svg`) in the primary color on a dark teal tile, next to the mono wordmark "AT**SUR**" (SUR in the primary color) and the lowercase tagline "at sürenindir".
+The mark is a galloping horse silhouette (`src/components/Logo.tsx`, `public/atsur.svg`) in the primary color on a dark teal tile, next to the mono wordmark "AT**SUR**" (SUR in the primary color) and the lowercase tagline "attack surface". The pun "at sürenindir" appears only as a small italic aside (login screen, status bar).
 
 ## Console structure
 
-A sticky top bar holds the brand, the active-target selector, the add-domain command field, the two scan actions and the account button. A left rail (a horizontal strip below 900 px) switches pages: Dashboard, Varlıklar, Bulgular, Teknolojiler, Kapsam, AI Analiz, and under "Yönetim" Hedefler. Pages are hash routes. Asset details open in a right-side panel next to the table, not in a modal. Severity colors: Yüksek red, Orta amber, Düşük blue, Bilgi gray; badges always carry a text label so color is never the only signal.
+A sticky top bar holds the brand, the active-target selector, the add-domain command field, the two scan actions and the account button. A left rail (a horizontal strip below 900 px) switches pages: Dashboard, Varlıklar, Bulgular, Teknolojiler, Kapsam, AI Analiz, and under "Yönetim" Hedefler. Pages are hash routes. Asset details open in a right-side panel next to the table, not in a modal; while it is open the WAF and technology columns are hidden. Unresolved hosts sit in a collapsed group under the table. Findings use a list + detail layout: severity tiles filter, the list is grouped by severity, the detail shows description, remediation and per-host evidence. Severity colors: Yüksek red, Orta amber, Düşük blue, Bilgi gray; badges always carry a text label so color is never the only signal.
 
 ## Runtime ownership
 

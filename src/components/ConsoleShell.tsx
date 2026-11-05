@@ -124,7 +124,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         <span className={domain ? 'is-on' : ''}>● {domain ? 'ACTIVE' : 'IDLE'}</span>
         <span>{domains.length} hedef kayıtlı</span>
         {domain && <span className="ac-mono">{domain}</span>}
-        <span className="ac-statusbar-r">ATSUR · at sürenindir</span>
+        <span className="ac-statusbar-r">ATSUR · attack surface <span className="ac-joke">· at sürenindir</span></span>
       </footer>
     </div>
   );

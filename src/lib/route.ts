@@ -10,6 +10,8 @@ export interface Route {
   host?: string;
   /** Varlıklar sayfasında teknoloji filtresi. */
   tech?: string;
+  /** Bulgular sayfasında seçili bulgu. */
+  finding?: string;
 }
 
 export function parseHash(hash: string): Route {
@@ -19,8 +21,10 @@ export function parseHash(hash: string): Route {
   const route: Route = { view };
   const host = params.get('host');
   const tech = params.get('tech');
+  const finding = params.get('finding');
   if (host) route.host = host;
   if (tech) route.tech = tech;
+  if (finding) route.finding = finding;
   return route;
 }
 
@@ -28,6 +32,7 @@ export function routeToHash(route: Route): string {
   const params = new URLSearchParams();
   if (route.host) params.set('host', route.host);
   if (route.tech) params.set('tech', route.tech);
+  if (route.finding) params.set('finding', route.finding);
   const query = params.toString();
   return `#/${route.view}${query ? `?${query}` : ''}`;
 }

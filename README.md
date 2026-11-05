@@ -1,6 +1,6 @@
-# ATSUR — Pasif OSINT konsolu
+# ATSUR — Attack Surface
 
-*at sürenindir*
+*ATtack SURface · at sürenindir*
 
 ATSUR, hedef bir şirketin alan adı üzerinden pasif subdomain taraması yapan, bulunan subdomain'lerde çalışan web servislerini analiz eden ve sonuçları bulgulara dönüştüren bir Açık Kaynak İstihbarat (OSINT) konsoludur.
 

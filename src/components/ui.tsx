@@ -103,3 +103,31 @@ export function GradeBars({ grades, values }: { grades: string[]; values: Array<
     </div>
   );
 }
+
+/** Bir varlığın bulgularını önem derecesine göre bölünmüş küçük bir çubukla gösterir. */
+export function RiskMeter({ findings, measured }: { findings: Finding[]; measured: boolean }) {
+  if (!findings.length) return <span className={measured ? 'ac-risk-clean' : 'ac-muted'}>{measured ? 'Temiz' : '—'}</span>;
+  const counts = countBySeverity(findings);
+  const summary = SEVERITY_ORDER.filter(severity => counts[severity]).map(severity => `${counts[severity]} ${SEVERITY_META[severity].label}`).join(', ');
+  const lead = SEVERITY_ORDER.find(severity => counts[severity]) as Severity;
+  return (
+    <span className="ac-risk" title={summary} aria-label={`Bulgular: ${summary}`}>
+      <span className="ac-risk-bar" aria-hidden="true">
+        {SEVERITY_ORDER.filter(severity => counts[severity]).map(severity => (
+          <i key={severity} className={`s-${severity}`} style={{ flexGrow: counts[severity] }} />
+        ))}
+      </span>
+      <span className="ac-risk-n">{findings.length}</span>
+      {lead !== 'info' && <span className={`ac-risk-lead s-${lead}`}>{counts[lead]} {SEVERITY_META[lead].label.toLowerCase()}</span>}
+    </span>
+  );
+}
+
+const STATUS_TEXT: Record<AssetStatus, string> = {
+  live: 'Canlı', dead: 'Çözülemedi', private: 'Özel IP', error: 'Hata', unknown: 'Doğrulanmadı', wildcard: 'Wildcard'
+};
+
+/** Host adının önündeki durum noktası; renk tek başına bilgi taşımasın diye metni de verir. */
+export function StatusDot({ status }: { status: AssetStatus }) {
+  return <span className={`ac-status-dot st-${status}`} title={STATUS_TEXT[status]}><span className="ac-sr">{STATUS_TEXT[status]}</span></span>;
+}

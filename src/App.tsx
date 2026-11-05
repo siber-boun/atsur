@@ -862,8 +862,9 @@ function App() {
             <BrandLockup />
           </div>
           <div className="header">
-            <h1>Pasif OSINT konsolu</h1>
+            <h1>Saldırı yüzeyi konsolu</h1>
             <p>Hesabınızla giriş yapın</p>
+            <p className="ac-login-joke">at sürenindir</p>
           </div>
           
           {authError && (

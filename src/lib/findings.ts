@@ -11,12 +11,18 @@ export const SEVERITY_META: Record<Severity, { label: string; short: string; wei
   info: { label: 'Bilgi', short: 'B', weight: 0 }
 };
 
+export type FindingCategory = 'TLS' | 'HTTP başlıkları' | 'Servisler' | 'Yazılım' | 'E-posta' | 'Cookie' | 'Koruma';
+
 export interface Finding {
   id: string;
   severity: Severity;
+  category: FindingCategory;
   title: string;
   description: string;
+  remediation: string;
   hosts: string[];
+  /** Host adı → o hosttaki somut gözlem (ör. "TLS 1.0, TLS 1.1"). */
+  evidence: Record<string, string>;
 }
 
 export interface FindingHost {
@@ -81,73 +87,169 @@ function isSilentWebPort(port: PortLike) {
   return port.isWebCandidate === true && port.isWeb !== true && port.protocol !== 'http:' && port.protocol !== 'https:';
 }
 
+interface HostRule {
+  id: string;
+  severity: Severity;
+  category: FindingCategory;
+  title: string;
+  description: string;
+  remediation: string;
+  /** Bulgu varsa host için kanıt metni, yoksa null. */
+  check: (detail: SubdomainDetail) => string | null;
+}
+
+const list = (items: string[], max = 3) => items.length > max ? `${items.slice(0, max).join(', ')} +${items.length - max}` : items.join(', ');
+
+const HOST_RULES: HostRule[] = [
+  {
+    id: 'tls-self-signed', severity: 'high', category: 'TLS', title: 'Self-signed TLS sertifikası',
+    description: 'Sertifika güvenilir bir otorite tarafından imzalanmamış; tarayıcılar uyarı gösterir ve araya girme saldırısı riski artar.',
+    remediation: 'Güvenilir bir sertifika otoritesinden (ör. ACME/Let’s Encrypt) sertifika alın; iç kullanım servisiyse internete açık olması gerekip gerekmediğini gözden geçirin.',
+    check: d => d.ssl?.isSelfSigned === true ? `yayıncı: ${d.ssl.issuer || 'bilinmiyor'}` : null
+  },
+  {
+    id: 'tls-invalid', severity: 'high', category: 'TLS', title: 'TLS sertifikası geçersiz',
+    description: 'Sertifika doğrulanamıyor veya süresi dolmuş.',
+    remediation: 'Sertifikayı yenileyin ve ara sertifikalar dahil zincirin tamamını sunun.',
+    check: d => d.ssl?.valid === false && d.ssl.isSelfSigned !== true
+      ? typeof d.ssl.daysLeft === 'number' && d.ssl.daysLeft < 0 ? `süresi ${-d.ssl.daysLeft} gün önce doldu` : `doğrulanamadı${d.ssl.issuer ? ` · ${d.ssl.issuer}` : ''}`
+      : null
+  },
+  {
+    id: 'tls-hostname', severity: 'high', category: 'TLS', title: 'Sertifika host adıyla eşleşmiyor',
+    description: 'Sunulan sertifikanın SAN listesi bu host adını kapsamıyor.',
+    remediation: 'Host adını SAN listesine ekleyen bir sertifika kullanın ya da bu adı doğru sanal hosta yönlendirin.',
+    check: d => d.ssl?.hostnameMatch === false ? (d.ssl.san?.length ? `SAN: ${list(d.ssl.san)}` : 'SAN listesinde yok') : null
+  },
+  {
+    id: 'tls-expiring', severity: 'medium', category: 'TLS', title: `Sertifika ${EXPIRY_WARNING_DAYS} gün içinde doluyor`,
+    description: 'Yenilenmezse servis erişilemez hale gelir.',
+    remediation: 'Sertifikayı yenileyin ve otomatik yenilemeyi (ACME) etkinleştirin.',
+    check: d => d.ssl?.valid === true && typeof d.ssl.daysLeft === 'number' && d.ssl.daysLeft <= EXPIRY_WARNING_DAYS ? `${d.ssl.daysLeft} gün kaldı` : null
+  },
+  {
+    id: 'tls-legacy', severity: 'medium', category: 'TLS', title: 'Eski TLS sürümleri açık (1.0 / 1.1)',
+    description: 'Sunucu kullanımdan kaldırılmış protokolleri kabul ediyor; protokol düşürme riskini artırır.',
+    remediation: 'Sunucu yapılandırmasında TLS 1.0 ve 1.1’i kapatın; yalnız TLS 1.2 ve 1.3’e izin verin.',
+    check: d => {
+      const versions = [d.ssl?.legacyProtocols?.tls10 === 'yes' ? 'TLS 1.0' : '', d.ssl?.legacyProtocols?.tls11 === 'yes' ? 'TLS 1.1' : ''].filter(Boolean);
+      return versions.length ? versions.join(', ') : null;
+    }
+  },
+  {
+    id: 'tls-weak-cipher', severity: 'medium', category: 'TLS', title: 'Zayıf şifre takımı',
+    description: 'Anlaşılan şifre takımı zayıf kabul edilen algoritmalar içeriyor.',
+    remediation: 'RC4, 3DES ve CBC-SHA1 gibi zayıf şifre takımlarını kapatın; güncel bir TLS yapılandırma profili kullanın.',
+    check: d => d.ssl?.cipher?.weak === true ? d.ssl.cipher.name : null
+  },
+  {
+    id: 'hdr-hsts', severity: 'medium', category: 'HTTP başlıkları', title: 'HSTS başlığı yok',
+    description: 'HTTPS kullanımı zorunlu tutulmuyor; ilk bağlantıda protokol düşürme saldırısına açık.',
+    remediation: 'HTTPS yanıtlarına Strict-Transport-Security başlığı ekleyin (ör. max-age=31536000; includeSubDomains).',
+    check: d => d.security?.missing.includes('HSTS') && (d.evidence?.protocol === 'https:' || Boolean(d.ssl)) ? `başlık notu ${d.security.grade} · ${d.security.score}/100` : null
+  },
+  {
+    id: 'hdr-csp', severity: 'medium', category: 'HTTP başlıkları', title: 'Content-Security-Policy yok',
+    description: 'XSS etkisini sınırlayan içerik politikası tanımlanmamış.',
+    remediation: 'Uygulamanın kullandığı kaynaklara göre bir Content-Security-Policy tanımlayın; önce Report-Only modunda deneyin.',
+    check: d => d.security?.missing.includes('CSP') ? `başlık notu ${d.security.grade} · ${d.security.score}/100` : null
+  },
+  {
+    id: 'ports-exposed-service', severity: 'medium', category: 'Servisler', title: 'İnternete açık veritabanı / yönetim servisi',
+    description: 'Veritabanı, kamera veya ERP gibi web dışı bir servis internetten erişilebilir görünüyor.',
+    remediation: 'Servisi internete kapatın ya da VPN veya IP izin listesi arkasına alın; açık kalması gerekiyorsa güncel ve güçlü kimlik doğrulamalı olduğunu doğrulayın.',
+    check: d => {
+      const ports = (d.ports || []).filter(isExposedServicePort);
+      return ports.length ? list(ports.map(port => `:${port.port} ${port.service || ''}`.trim())) : null;
+    }
+  },
+  {
+    id: 'lib-outdated', severity: 'medium', category: 'Yazılım', title: 'Eski istemci kütüphanesi',
+    description: 'Güvenlik düzeltmesi içeren sürümden eski bir kütüphane kullanılıyor. Bilinen zafiyetler sürüm bazında doğrulanmalı.',
+    remediation: 'Kütüphaneyi güncel sürüme yükseltin; kullanılmıyorsa sayfadan kaldırın.',
+    check: d => {
+      const labels = outdatedLibraries(d.technologies);
+      return labels.length ? labels.join(', ') : null;
+    }
+  },
+  {
+    id: 'hdr-secondary', severity: 'low', category: 'HTTP başlıkları', title: 'Diğer eksik güvenlik başlıkları',
+    description: 'Clickjacking, MIME türü tahmini ve bilgi sızıntısına karşı koruyan yardımcı başlıklar eksik.',
+    remediation: 'X-Frame-Options (ya da CSP frame-ancestors), X-Content-Type-Options: nosniff ve Referrer-Policy başlıklarını ekleyin.',
+    check: d => {
+      const missing = (d.security?.missing || []).filter(header => SECONDARY_HEADERS.includes(header));
+      return missing.length ? `${missing.length} eksik: ${list(missing, 2)}` : null;
+    }
+  },
+  {
+    id: 'cookie-flags', severity: 'low', category: 'Cookie', title: 'Güvensiz cookie bayrakları',
+    description: 'Secure, HttpOnly veya SameSite bayrağı eksik cookie gönderiliyor.',
+    remediation: 'Oturum cookie’lerine Secure, HttpOnly ve uygun SameSite bayraklarını ekleyin.',
+    check: d => {
+      const issues = [...new Set((d.cookies || []).flatMap(cookie => cookie.issues))];
+      return issues.length ? list(issues, 2) : null;
+    }
+  },
+  {
+    id: 'waf-none', severity: 'info', category: 'Koruma', title: 'WAF tespit edilmedi',
+    description: 'Yanıt başlıklarında bilinen bir WAF/CDN imzası görülmedi. Bu bir zafiyet değil, eksik bir savunma katmanıdır.',
+    remediation: 'Kritik uygulamaların önüne WAF/CDN koymayı değerlendirin.',
+    check: d => d.waf?.detected === false ? 'imza yok' : null
+  },
+  {
+    id: 'ports-silent-web', severity: 'info', category: 'Servisler', title: 'HTTP yanıtı vermeyen açık port',
+    description: 'Port bağlantı kabul ediyor ama HTTP(S) yanıtı alınamadı.',
+    remediation: 'Portta çalışan servisi belirleyin; gerekmiyorsa dışarıya kapatın.',
+    check: d => {
+      const ports = (d.ports || []).filter(isSilentWebPort);
+      return ports.length ? ports.map(port => `:${port.port}`).join(', ') : null;
+    }
+  }
+];
+
 /**
  * Tarama sonuçlarından bulgu listesi türetir. Yalnız ölçülmüş değerlere bakar;
  * ölçülmemiş (undefined) alanlar bulgu üretmez.
  */
 export function deriveFindings(domain: string, hosts: FindingHost[], email?: EmailSecurityInfo): Finding[] {
   const findings: Finding[] = [];
-  const add = (id: string, severity: Severity, title: string, description: string, names: string[]) => {
-    const unique = [...new Set(names)];
-    if (unique.length) findings.push({ id, severity, title, description, hosts: unique });
-  };
-  const pick = (test: (detail: SubdomainDetail) => boolean) =>
-    hosts.filter(host => host.detail && test(host.detail)).map(host => host.name);
-
-  add('tls-self-signed', 'high', 'Self-signed TLS sertifikası',
-    'Sertifika güvenilir bir otorite tarafından imzalanmamış; tarayıcılar uyarı gösterir ve araya girme saldırısı riski artar.',
-    pick(d => d.ssl?.isSelfSigned === true));
-  add('tls-invalid', 'high', 'TLS sertifikası geçersiz',
-    'Sertifika doğrulanamıyor veya süresi dolmuş.',
-    pick(d => d.ssl?.valid === false && d.ssl?.isSelfSigned !== true));
-  add('tls-hostname', 'high', 'Sertifika host adıyla eşleşmiyor',
-    'Sunulan sertifikanın SAN listesi bu host adını kapsamıyor.',
-    pick(d => d.ssl?.hostnameMatch === false));
-  add('tls-expiring', 'medium', `Sertifika ${EXPIRY_WARNING_DAYS} gün içinde doluyor`,
-    'Yenilenmezse servis erişilemez hale gelir.',
-    pick(d => d.ssl?.valid === true && typeof d.ssl.daysLeft === 'number' && d.ssl.daysLeft <= EXPIRY_WARNING_DAYS));
-  add('tls-legacy', 'medium', 'Eski TLS sürümleri açık (1.0 / 1.1)',
-    'Sunucu kullanımdan kaldırılmış protokolleri kabul ediyor; protokol düşürme riskini artırır.',
-    pick(d => d.ssl?.legacyProtocols?.tls10 === 'yes' || d.ssl?.legacyProtocols?.tls11 === 'yes'));
-  add('tls-weak-cipher', 'medium', 'Zayıf şifre takımı',
-    'Anlaşılan şifre takımı zayıf kabul edilen algoritmalar içeriyor.',
-    pick(d => d.ssl?.cipher?.weak === true));
-  add('hdr-hsts', 'medium', 'HSTS başlığı yok',
-    'HTTPS kullanımı zorunlu tutulmuyor; ilk bağlantıda protokol düşürme saldırısına açık.',
-    pick(d => Boolean(d.security?.missing.includes('HSTS')) && (d.evidence?.protocol === 'https:' || Boolean(d.ssl))));
-  add('hdr-csp', 'medium', 'Content-Security-Policy yok',
-    'XSS etkisini sınırlayan içerik politikası tanımlanmamış.',
-    pick(d => Boolean(d.security?.missing.includes('CSP'))));
-
-  add('ports-exposed-service', 'medium', 'İnternete açık veritabanı / yönetim servisi',
-    'Veritabanı, kamera veya ERP gibi web dışı bir servis internetten erişilebilir görünüyor; dışarı açık olması gerekip gerekmediği doğrulanmalı.',
-    pick(d => Boolean(d.ports?.some(isExposedServicePort))));
-
-  const outdated = hosts.flatMap(host => outdatedLibraries(host.detail?.technologies).map(label => ({ host: host.name, label })));
-  add('lib-outdated', 'medium', 'Eski istemci kütüphanesi',
-    `Güvenlik düzeltmesi içeren sürümden eski: ${[...new Set(outdated.map(item => item.label))].join(', ')}. Bilinen zafiyetler sürüm bazında doğrulanmalı.`,
-    outdated.map(item => item.host));
-
-  if (email) {
-    if (!email.spf.hasRecord) add('mail-spf-missing', 'high', 'SPF kaydı yok', 'Alan adı adına hangi sunucuların e-posta gönderebileceği tanımlanmamış.', [domain]);
-    else if (email.spf.all === '+all') add('mail-spf-all', 'high', 'SPF +all', 'SPF kaydı tüm sunuculara izin veriyor; kayıt koruma sağlamıyor.', [domain]);
-    if (!email.dmarc.hasRecord) add('mail-dmarc-missing', 'medium', 'DMARC kaydı yok', 'Sahte e-postalar için politika tanımlanmamış.', [domain]);
-    else if (email.dmarc.policy === 'none') add('mail-dmarc-none', 'medium', 'DMARC politikası p=none', 'Sahte e-postalar reddedilmiyor, yalnızca raporlanıyor.', [domain]);
-    if (!email.dkim.hasRecord) add('mail-dkim', 'info', 'DKIM kaydı bulunamadı', 'Yalnızca yaygın selector adları denendi; sonuç kesin değil.', [domain]);
+  for (const rule of HOST_RULES) {
+    const evidence: Record<string, string> = {};
+    for (const host of hosts) {
+      if (!host.detail || evidence[host.name] !== undefined) continue;
+      const observed = rule.check(host.detail);
+      if (observed !== null) evidence[host.name] = observed;
+    }
+    const names = Object.keys(evidence);
+    if (names.length) {
+      const { check: _check, ...meta } = rule;
+      void _check;
+      findings.push({ ...meta, hosts: names, evidence });
+    }
   }
 
-  add('hdr-secondary', 'low', 'Diğer eksik güvenlik başlıkları',
-    `${SECONDARY_HEADERS.slice(0, 5).join(', ')} ve Cross-Origin politikalarından en az biri eksik.`,
-    pick(d => Boolean(d.security?.missing.some(header => SECONDARY_HEADERS.includes(header)))));
-  add('cookie-flags', 'low', 'Güvensiz cookie bayrakları',
-    'Secure, HttpOnly veya SameSite bayrağı eksik cookie gönderiliyor.',
-    pick(d => Boolean(d.cookies?.some(cookie => cookie.issues.length > 0))));
-  add('waf-none', 'info', 'WAF tespit edilmedi',
-    'Yanıt başlıklarında bilinen bir WAF/CDN imzası görülmedi.',
-    pick(d => d.waf?.detected === false));
-  add('ports-silent-web', 'info', 'HTTP yanıtı vermeyen açık port',
-    'Port bağlantı kabul ediyor ama HTTP(S) yanıtı alınamadı; hangi servis olduğu doğrulanmalı.',
-    pick(d => Boolean(d.ports?.some(isSilentWebPort))));
+  if (email) {
+    const mail = (id: string, severity: Severity, title: string, description: string, remediation: string, observed: string) =>
+      findings.push({ id, severity, category: 'E-posta', title, description, remediation, hosts: [domain], evidence: { [domain]: observed } });
+    if (!email.spf.hasRecord) {
+      mail('mail-spf-missing', 'high', 'SPF kaydı yok', 'Alan adı adına hangi sunucuların e-posta gönderebileceği tanımlanmamış; sahte gönderim kolaylaşır.',
+        'Yetkili gönderici sunucuları listeleyen ve -all (geçişte ~all) ile biten bir SPF kaydı yayınlayın.', 'TXT kaydında SPF yok');
+    } else if (email.spf.all === '+all') {
+      mail('mail-spf-all', 'high', 'SPF +all', 'SPF kaydı tüm sunuculara izin veriyor; kayıt koruma sağlamıyor.',
+        '+all yerine -all (geçiş sürecinde ~all) kullanın.', 'v=spf1 … +all');
+    }
+    if (!email.dmarc.hasRecord) {
+      mail('mail-dmarc-missing', 'medium', 'DMARC kaydı yok', 'Sahte e-postalar için politika tanımlanmamış.',
+        '_dmarc kaydı yayınlayın; raporları izleyip p=quarantine ve p=reject’e ilerleyin.', '_dmarc kaydı yok');
+    } else if (email.dmarc.policy === 'none') {
+      mail('mail-dmarc-none', 'medium', 'DMARC politikası p=none', 'Sahte e-postalar reddedilmiyor, yalnızca raporlanıyor.',
+        'Raporları inceledikten sonra politikayı p=quarantine, ardından p=reject yapın.', 'p=none');
+    }
+    if (!email.dkim.hasRecord) {
+      mail('mail-dkim', 'info', 'DKIM kaydı bulunamadı', 'Yalnızca yaygın selector adları denendi; sonuç kesin değil.',
+        'Gönderim yapan servislerde DKIM imzalamayı etkinleştirin ve kullanılan selector’ı doğrulayın.', 'yaygın selector’larda kayıt yok');
+    }
+  }
 
   return findings.sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
 }

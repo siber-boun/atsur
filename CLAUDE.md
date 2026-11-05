@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**ATSUR** ("at sürenindir"; formerly branded "BUSIBER OSINT") — a passive OSINT console that enumerates a target company's subdomains, profiles the services running on them, derives findings, and can have an LLM comment on the results. Live at https://osint.busiber.workers.dev/.
+**ATSUR** (ATtack SURface; the Turkish reading "at sürenindir" is an intentional pun; formerly branded "BUSIBER OSINT") — a passive OSINT console that enumerates a target company's subdomains, profiles the services running on them, derives findings, and can have an LLM comment on the results. Live at https://osint.busiber.workers.dev/.
 
 ## Commands
 

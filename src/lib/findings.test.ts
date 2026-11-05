@@ -113,3 +113,18 @@ test('hash yönlendirmesi gidiş-dönüş korunur, bilinmeyen sayfa dashboard ol
   assert.deepEqual(parseHash(''), { view: 'dashboard' });
   assert.equal(routeToHash({ view: 'assets', host: 'a.example.com' }), '#/assets?host=a.example.com');
 });
+
+test('her bulgu kategori, düzeltme önerisi ve host başına kanıt taşır', () => {
+  const findings = deriveFindings('example.com', [
+    { name: 'a.example.com', detail: detail({ ssl: { valid: true, grade: 'D', legacyProtocols: { tls10: 'yes', tls11: 'no' } } }) },
+    { name: 'b.example.com', detail: detail({ ports: [{ port: 1433, status: 'TCP Açık', protocol: 'tcp:', service: 'Microsoft SQL Server', isWeb: false, isWebCandidate: false }] }) }
+  ], { spf: { hasRecord: false, hasMinusAll: false }, dmarc: { hasRecord: true, policy: 'reject' }, dkim: { hasRecord: true }, score: 60, grade: 'C' });
+  const legacy = findings.find(finding => finding.id === 'tls-legacy');
+  assert.equal(legacy?.category, 'TLS');
+  assert.deepEqual(legacy?.evidence, { 'a.example.com': 'TLS 1.0' });
+  assert.ok(legacy?.remediation.includes('TLS 1.0'));
+  assert.equal(findings.find(finding => finding.id === 'ports-exposed-service')?.evidence['b.example.com'], ':1433 Microsoft SQL Server');
+  const spf = findings.find(finding => finding.id === 'mail-spf-missing');
+  assert.deepEqual(spf?.hosts, ['example.com']);
+  assert.ok(findings.every(finding => finding.remediation && finding.hosts.every(host => finding.evidence[host])));
+});

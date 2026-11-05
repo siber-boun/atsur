@@ -12,7 +12,7 @@ function Row({ k, children }: { k: string; children: ReactNode }) {
 }
 
 export function AssetDrawer({ row, onClose }: { row: AssetRow; onClose: () => void }) {
-  const { actions } = useConsole();
+  const { actions, navigate } = useConsole();
   const ref = useRef<HTMLElement>(null);
   const { detail } = row;
   const ssl = detail?.ssl;
@@ -46,7 +46,33 @@ export function AssetDrawer({ row, onClose }: { row: AssetRow; onClose: () => vo
         <button type="button" className="ac-iconbtn" aria-label="Detayı kapat" onClick={onClose}><CloseIcon /></button>
       </div>
 
+      <div className="ac-drawer-tiles">
+        <div><span>HTTP</span><b className="ac-mono">{row.http ? row.http.status : '—'}</b></div>
+        <div><span>TLS</span><Grade grade={row.tlsGrade} label="TLS notu" /></div>
+        <div><span>Başlık</span><Grade grade={row.headerGrade} label="Başlık notu" /></div>
+        <div><span>WAF</span><b className="ac-small">{row.wafDetected ? row.wafName || 'var' : row.wafDetected === false ? 'yok' : '—'}</b></div>
+      </div>
+
       {row.busy && <AnalysisWaitIndicator />}
+
+      <section className="ac-sec">
+        <h3>Bulgular · {row.findings.length}</h3>
+        {row.findings.length ? (
+          <ul className="ac-drawer-findings">
+            {row.findings.map(finding => (
+              <li key={finding.id}>
+                <button type="button" onClick={() => navigate({ view: 'findings', finding: finding.id })}>
+                  <Badge tone={finding.severity}>{SEVERITY_META[finding.severity].label}</Badge>
+                  <span className="ac-df-copy">
+                    <span className="ac-df-title">{finding.title}</span>
+                    {finding.evidence[row.name] && <span className="ac-df-ev">{finding.evidence[row.name]}</span>}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="ac-note">{row.detail?.ssl || row.detail?.security ? 'Bu hostta bulgu yok.' : 'Bulgu üretmek için tam kapsamlı analizi çalıştırın.'}</p>}
+      </section>
       {detail?.serviceError && <p className="ac-alert">{detail.serviceError}</p>}
       {detail?.advancedError && <p className="ac-alert">{detail.advancedError}</p>}
 
@@ -116,17 +142,6 @@ export function AssetDrawer({ row, onClose }: { row: AssetRow; onClose: () => vo
           </ul>
         </section>
       )}
-
-      <section className="ac-sec">
-        <h3>Bu hosta ait bulgular</h3>
-        {row.findings.length ? (
-          <ul className="ac-list-plain">
-            {row.findings.map(finding => (
-              <li key={finding.id}><Badge tone={finding.severity}>{SEVERITY_META[finding.severity].label}</Badge> {finding.title}</li>
-            ))}
-          </ul>
-        ) : <p className="ac-note">Bulgu yok.</p>}
-      </section>
 
       <section className="ac-sec">
         <h3>Kaynaklar</h3>
